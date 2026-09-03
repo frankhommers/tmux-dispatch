@@ -23,7 +23,7 @@ export function LinkDevice() {
             <h1 className="text-lg font-semibold tracking-tight">Link a machine</h1>
           </div>
           <p className="text-sm text-muted-foreground">
-            Enter the code that <code className="font-mono">tmux-mcp ui-login</code> printed.
+            Enter the code that <code className="font-mono">tmux-mcp dispatch-login</code> printed.
           </p>
         </CardHeader>
         <CardContent className="flex flex-col gap-3">

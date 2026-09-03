@@ -1,8 +1,8 @@
 {
-  "name": "tmux-mcp-ui",
+  "name": "tmux-dispatch",
   "private": true,
   "type": "module",
-  "description": "Source for the tmux-mcp control UI. Built output is committed to ../ui-dist so installing tmux-mcp never needs this toolchain.",
+  "description": "The service where a human dispatches a tmux pane to an agent that asked for one.",
   "scripts": {
     "dev": "vite",
     "dev:server": "tsx watch server/main.ts",

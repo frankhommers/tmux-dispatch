@@ -5,15 +5,15 @@ import {
   isCompatible,
   parseAgentMessage,
   type AgentIdentity,
-  type ServerToUi,
-  type UiToServer,
+  type ServerToDispatch,
+  type DispatchToServer,
   type WireCandidate,
 } from './protocol.js';
 
 /**
  * Every connected MCP server and the requests it currently has open.
  *
- * The UI holds no tmux knowledge: a request arrives with its candidates, and
+ * Dispatch holds no tmux knowledge: a request arrives with its candidates, and
  * an answer is a name the agent then validates. Requests live only as long as
  * the socket that carries them, because answering a dead socket is a lie.
  */
@@ -99,7 +99,7 @@ export class AgentRegistry extends EventEmitter {
     socket.on('error', () => { /* 'close' follows */ });
   }
 
-  private handle(agentId: number, accountId: number, message: ServerToUi): void {
+  private handle(agentId: number, accountId: number, message: ServerToDispatch): void {
     switch (message.type) {
       case 'request': {
         this.requests.set(message.id, {
@@ -146,7 +146,7 @@ export class AgentRegistry extends EventEmitter {
     }
   }
 
-  private send(socket: WebSocket, message: UiToServer): void {
+  private send(socket: WebSocket, message: DispatchToServer): void {
     try { socket.send(JSON.stringify(message)); } catch { /* the close handler cleans up */ }
   }
 

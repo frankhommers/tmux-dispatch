@@ -4,7 +4,7 @@ import { startService } from './http.js';
 const config = loadConfig();
 const service = await startService(config);
 
-console.log(`tmux-mcp-ui listening on :${service.port} (auth: ${config.authMode})`);
+console.log(`tmux-dispatch listening on :${service.port} (auth: ${config.authMode})`);
 if (config.authMode === 'token') {
   console.log(`Open ${config.publicUrl}/?t=${config.token}`);
 }

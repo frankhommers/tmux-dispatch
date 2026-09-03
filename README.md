@@ -1,6 +1,6 @@
-# tmux-mcp-ui
+# tmux-dispatch
 
-The control UI for [tmux-mcp](https://github.com/frankhommers/tmux-mcp): a web
+The dispatch service for [tmux-mcp](https://github.com/frankhommers/tmux-mcp): a web
 service where a human answers an agent's request for a tmux pane, from a
 laptop or a phone.
 
@@ -67,14 +67,14 @@ service refuses requests forwarded as plain http.
 ## Connecting a machine
 
 ```bash
-tmux-mcp ui-login --url https://tmux.example.com
+tmux-mcp dispatch-login --url https://tmux.example.com
 # Open https://tmux.example.com/link and enter: WQ7F-2K9P
 
-tmux-mcp --human-assigned --ui-url wss://tmux.example.com/agent
+tmux-mcp --human-assigned --dispatch-url wss://tmux.example.com/agent
 ```
 
 Pairing is a device-code flow, so no secret is ever pasted by hand. Devices
-are listed and revoked from the UI; revoking drops the socket.
+are listed and revoked from dispatch; revoking drops the socket.
 
 ## Assigning without being asked
 

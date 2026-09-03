@@ -30,7 +30,7 @@ export interface WireCandidate {
   label: string;
 }
 
-export type ServerToUi =
+export type ServerToDispatch =
   | { type: 'hello'; protocolVersion: string; agent: AgentIdentity }
   | {
       type: 'request';
@@ -46,7 +46,7 @@ export type ServerToUi =
   | { type: 'result'; id: string; ok: true; target: string }
   | { type: 'result'; id: string; ok: false; error: string };
 
-export type UiToServer =
+export type DispatchToServer =
   | { type: 'welcome'; protocolVersion: string; account?: string }
   | { type: 'refuse'; reason: 'protocol_version' | 'unauthorized'; protocolVersion?: string }
   | { type: 'answer'; id: string; target: string }
@@ -54,7 +54,7 @@ export type UiToServer =
   | { type: 'refresh'; id: string };
 
 /** Parse defensively: the peer may be a different version. */
-export function parseAgentMessage(raw: string): ServerToUi | null {
+export function parseAgentMessage(raw: string): ServerToDispatch | null {
   let value: unknown;
   try {
     value = JSON.parse(raw);
@@ -65,12 +65,12 @@ export function parseAgentMessage(raw: string): ServerToUi | null {
   const message = value as { type?: unknown; id?: unknown };
   switch (message.type) {
     case 'hello':
-      return message as ServerToUi;
+      return message as ServerToDispatch;
     case 'request':
     case 'candidates':
     case 'withdraw':
     case 'result':
-      return typeof message.id === 'string' ? (message as ServerToUi) : null;
+      return typeof message.id === 'string' ? (message as ServerToDispatch) : null;
     default:
       return null;
   }

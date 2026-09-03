@@ -67,7 +67,7 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
     port: Number(env.PORT ?? 7676),
     publicUrl,
     authMode,
-    token: env.TMUX_MCP_UI_TOKEN ?? randomBytes(16).toString('hex'),
+    token: env.TMUX_MCP_DISPATCH_TOKEN ?? randomBytes(16).toString('hex'),
     adminPassword: env.ADMIN_PASSWORD,
     adminPasswordHash: env.ADMIN_PASSWORD_HASH,
     oidcIssuer: env.OIDC_ISSUER,

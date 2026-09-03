@@ -1,5 +1,5 @@
 services:
-  tmux-mcp-ui:
+  tmux-dispatch:
     build: .
     # Publish on loopback for a local deployment; put a TLS proxy in front
     # when this is reachable from the internet.
@@ -20,8 +20,8 @@ services:
       OIDC_ALLOWED_SUBS: ${OIDC_ALLOWED_SUBS:-}
       AUTH_MODE: ${AUTH_MODE:-}
     volumes:
-      - tmux-mcp-ui:/data
+      - tmux-dispatch:/data
     restart: unless-stopped
 
 volumes:
-  tmux-mcp-ui:
+  tmux-dispatch:

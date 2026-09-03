@@ -584,3 +584,35 @@ test('handing the same pane back over makes it current again', async () => {
     }
   });
 });
+
+test('a machine that is gone and holds nothing is not listed, but is still refused', async () => {
+  await withService({}, async ({ url, config }) => {
+    const instanceId = randomUUID();
+    const agent = connectAgent(url, config.token, { instanceId });
+    await agent.waitFor('welcome');
+    agent.send({ type: 'grants', grants: [GRANT] });
+    await new Promise(r => setTimeout(r, 200));
+
+    await fetch(`${url}/api/agents/${instanceId}/revoke`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json', Authorization: `Bearer ${config.token}` },
+      body: JSON.stringify({ target: '%3' }),
+    });
+    agent.close();
+    await new Promise(r => setTimeout(r, 300));
+
+    const body = await inbox(url, config);
+    assert.deepEqual(body.agents, [], 'nothing connected and nothing held is nothing to show');
+
+    // Forgetting it on screen is not forgetting it: the pane stays taken back.
+    const again = connectAgent(url, config.token, { instanceId });
+    try {
+      await again.waitFor('welcome');
+      again.send({ type: 'check', id: 'c-9', target: '%3' });
+      const verdict = await again.waitFor('verdict', 4000, m => m.id === 'c-9');
+      assert.equal(verdict.allowed, false);
+    } finally {
+      again.close();
+    }
+  });
+});

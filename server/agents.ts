@@ -206,8 +206,15 @@ export class AgentRegistry extends EventEmitter {
     try { socket.send(JSON.stringify(message)); } catch { /* the close handler cleans up */ }
   }
 
+  /**
+   * The machines worth showing: connected, or still holding something. An
+   * entry that is neither may still be remembered — a revocation outlives the
+   * socket it could not be delivered on — but there is nothing to show.
+   */
   listAgents(accountId: number): ConnectedAgent[] {
-    return [...this.agents.values()].filter(agent => agent.accountId === accountId);
+    return [...this.agents.values()].filter(
+      agent => agent.accountId === accountId && (agent.connected || agent.grants.length > 0)
+    );
   }
 
   listRequests(accountId: number): OpenRequest[] {

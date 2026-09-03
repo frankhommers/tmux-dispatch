@@ -8,19 +8,26 @@ import {
   type ServerToDispatch,
   type DispatchToServer,
   type WireCandidate,
+  type WireGrant,
 } from './protocol.js';
 
 /**
- * Every connected MCP server and the requests it currently has open.
+ * Every MCP server dispatch knows about and what it currently holds.
  *
  * Dispatch holds no tmux knowledge: a request arrives with its candidates, and
  * an answer is a name the agent then validates. Requests live only as long as
  * the socket that carries them, because answering a dead socket is a lie.
+ *
+ * Grants are different. An idle agent reports what it holds and hangs up, so
+ * an entry outlives its socket for as long as it still has something handed
+ * to it. The agent's instanceId is what makes that the same machine rather
+ * than a new one, and it asks before every action, so taking a pane back
+ * lands even while nothing is connected.
  */
 
 export interface OpenRequest {
   id: string;
-  agentId: number;
+  agentId: string;
   reason: string;
   kind: 'pane' | 'window';
   createdAt: number;
@@ -33,33 +40,34 @@ export interface OpenRequest {
 }
 
 export interface ConnectedAgent {
-  id: number;
+  id: string;
   accountId: number;
   deviceId: number | null;
   identity: AgentIdentity;
   connectedAt: number;
+  lastSeen: number;
+  connected: boolean;
+  grants: WireGrant[];
+  /** Targets the human took back, and when. A check for one of these is refused. */
+  revoked: Map<string, number>;
 }
 
-let nextAgentId = 1;
+let nextAnonymousId = 1;
 
 export class AgentRegistry extends EventEmitter {
-  private readonly sockets = new Map<number, WebSocket>();
-  private readonly agents = new Map<number, ConnectedAgent>();
+  private readonly sockets = new Map<string, WebSocket>();
+  private readonly agents = new Map<string, ConnectedAgent>();
   private readonly requests = new Map<string, OpenRequest>();
 
-  /**
-   * Take over a freshly authenticated socket. Resolves once the handshake is
-   * done, or rejects when the protocol majors differ.
-   */
+  /** Take over a freshly authenticated socket and run the handshake on it. */
   accept(socket: WebSocket, accountId: number, deviceId: number | null, accountName: string): void {
-    const id = nextAgentId++;
-    let handshaken = false;
+    let id: string | null = null;
 
     socket.on('message', data => {
       const message = parseAgentMessage(String(data));
       if (!message) return;
 
-      if (!handshaken) {
+      if (id === null) {
         if (message.type !== 'hello') return;
         if (!isCompatible(message.protocolVersion)) {
           this.send(socket, {
@@ -70,14 +78,20 @@ export class AgentRegistry extends EventEmitter {
           socket.close();
           return;
         }
-        handshaken = true;
+        // A 1.0 server has no instanceId; it is a new machine every dial-in.
+        id = message.agent.instanceId ?? `anon-${nextAnonymousId++}`;
         this.sockets.set(id, socket);
+        const known = this.agents.get(id);
         this.agents.set(id, {
           id,
           accountId,
           deviceId,
           identity: message.agent,
-          connectedAt: Date.now(),
+          connectedAt: known?.connectedAt ?? Date.now(),
+          lastSeen: Date.now(),
+          connected: true,
+          grants: known?.grants ?? [],
+          revoked: known?.revoked ?? new Map(),
         });
         this.send(socket, { type: 'welcome', protocolVersion: PROTOCOL_VERSION, account: accountName });
         this.emit('change', accountId);
@@ -88,10 +102,19 @@ export class AgentRegistry extends EventEmitter {
     });
 
     socket.on('close', () => {
+      if (id === null) return;
+      // A newer socket for the same server may already have taken over.
+      if (this.sockets.get(id) !== socket) return;
       this.sockets.delete(id);
-      this.agents.delete(id);
       for (const [requestId, request] of this.requests) {
         if (request.agentId === id) this.requests.delete(requestId);
+      }
+      const agent = this.agents.get(id);
+      if (agent) {
+        agent.connected = false;
+        agent.lastSeen = Date.now();
+        // Nothing handed out and nothing to take back: nothing to show either.
+        if (agent.grants.length === 0 && agent.revoked.size === 0) this.agents.delete(id);
       }
       this.emit('change', accountId);
     });
@@ -99,7 +122,10 @@ export class AgentRegistry extends EventEmitter {
     socket.on('error', () => { /* 'close' follows */ });
   }
 
-  private handle(agentId: number, accountId: number, message: ServerToDispatch): void {
+  private handle(agentId: string, accountId: number, message: ServerToDispatch): void {
+    const agent = this.agents.get(agentId);
+    if (agent) agent.lastSeen = Date.now();
+
     switch (message.type) {
       case 'request': {
         this.requests.set(message.id, {
@@ -141,8 +167,36 @@ export class AgentRegistry extends EventEmitter {
         this.emit('change', accountId);
         return;
       }
+      case 'grants': {
+        if (!agent) return;
+        agent.grants = message.grants;
+        this.settleRevocations(agent);
+        this.emit('change', accountId);
+        return;
+      }
+      case 'check': {
+        const socket = this.sockets.get(agentId);
+        if (!socket) return;
+        this.send(socket, {
+          type: 'verdict',
+          id: message.id,
+          allowed: !agent?.revoked.has(message.target),
+        });
+        return;
+      }
       default:
         return;
+    }
+  }
+
+  /**
+   * Drop revocations the agent has caught up with: either it no longer lists
+   * the target, or a human has handed the same one back since.
+   */
+  private settleRevocations(agent: ConnectedAgent): void {
+    for (const [target, at] of agent.revoked) {
+      const grant = agent.grants.find(g => g.target === target);
+      if (!grant || grant.since > at) agent.revoked.delete(target);
     }
   }
 
@@ -185,6 +239,23 @@ export class AgentRegistry extends EventEmitter {
     const socket = this.sockets.get(request.agentId);
     if (!socket) return false;
     this.send(socket, { type: 'refresh', id });
+    return true;
+  }
+
+  /**
+   * Take a target back from an agent. Remembered rather than merely sent: the
+   * agent asks before its next action, so this lands even if it is not
+   * listening right now.
+   */
+  revoke(accountId: number, agentId: string, target: string): boolean {
+    const agent = this.agents.get(agentId);
+    if (!agent || agent.accountId !== accountId) return false;
+    if (!agent.grants.some(grant => grant.target === target)) return false;
+    agent.revoked.set(target, Date.now());
+    agent.grants = agent.grants.filter(grant => grant.target !== target);
+    const socket = this.sockets.get(agentId);
+    if (socket) this.send(socket, { type: 'revoke', target });
+    this.emit('change', accountId);
     return true;
   }
 

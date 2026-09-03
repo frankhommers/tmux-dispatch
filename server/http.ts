@@ -254,6 +254,9 @@ export async function startService(config: Config): Promise<Service> {
           id: agent.id,
           identity: agent.identity,
           connectedAt: agent.connectedAt,
+          lastSeen: agent.lastSeen,
+          connected: agent.connected,
+          grants: agent.grants,
         })),
       });
       return;
@@ -278,6 +281,18 @@ export async function startService(config: Config): Promise<Service> {
         return;
       }
       sendJson(res, agents.answer(accountId, id, { target }) ? 200 : 404, { ok: true });
+      return;
+    }
+
+    const revokeMatch = path.match(/^\/api\/agents\/([^/]+)\/revoke$/);
+    if (revokeMatch && req.method === 'POST') {
+      const body = await readBody(req);
+      const target = typeof body.target === 'string' ? body.target : '';
+      if (!target) {
+        sendJson(res, 400, { error: 'target is required' });
+        return;
+      }
+      sendJson(res, agents.revoke(accountId, revokeMatch[1], target) ? 200 : 404, { ok: true });
       return;
     }
 

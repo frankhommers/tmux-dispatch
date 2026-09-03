@@ -1,11 +1,12 @@
 import assert from 'node:assert/strict';
+import { randomUUID } from 'node:crypto';
 import test from 'node:test';
 import { WebSocket } from 'ws';
 
 import { loadConfig } from '../server-dist/config.js';
 import { startService } from '../server-dist/http.js';
 
-const PROTOCOL_VERSION = '1.0';
+const PROTOCOL_VERSION = '1.1';
 
 async function withService(env, run) {
   const config = loadConfig({ PORT: '0', DATABASE_PATH: ':memory:', SESSION_SECRET: 'test-secret', ...env });
@@ -18,7 +19,7 @@ async function withService(env, run) {
 }
 
 /** A stand-in MCP server: dials in, says hello, and records what it is told. */
-function connectAgent(url, token, { protocolVersion = PROTOCOL_VERSION } = {}) {
+function connectAgent(url, token, { protocolVersion = PROTOCOL_VERSION, instanceId = randomUUID() } = {}) {
   const socket = new WebSocket(`${url.replace(/^http/, 'ws')}/agent`, {
     headers: token ? { Authorization: `Bearer ${token}` } : {},
   });
@@ -27,10 +28,10 @@ function connectAgent(url, token, { protocolVersion = PROTOCOL_VERSION } = {}) {
     socket,
     received,
     send: message => socket.send(JSON.stringify(message)),
-    waitFor: async (type, timeoutMs = 4000) => {
+    waitFor: async (type, timeoutMs = 4000, where = () => true) => {
       const deadline = Date.now() + timeoutMs;
       while (Date.now() < deadline) {
-        const found = received.find(m => m.type === type);
+        const found = received.find(m => m.type === type && where(m));
         if (found) return found;
         await new Promise(r => setTimeout(r, 20));
       }
@@ -42,7 +43,7 @@ function connectAgent(url, token, { protocolVersion = PROTOCOL_VERSION } = {}) {
   socket.on('open', () => state.send({
     type: 'hello',
     protocolVersion,
-    agent: { pid: 1, host: 'test', cwd: '/tmp', tmuxSession: null, scope: 'none', client: 'test' },
+    agent: { instanceId, pid: 1, host: 'test', cwd: '/tmp', tmuxSession: null, scope: 'none', client: 'test' },
   }));
   return state;
 }
@@ -378,5 +379,126 @@ test('a closing agent takes its open requests with it', async () => {
       headers: { Authorization: `Bearer ${config.token}` },
     })).json();
     assert.equal(body.requests.length, 0, 'answering a dead socket would be a lie');
+  });
+});
+
+const GRANT = { target: '%3', kind: 'pane', label: '%3  main:code.1  zsh', since: 1_700_000_000_000 };
+
+/** Read the inbox the way the browser does. */
+async function inbox(url, config) {
+  return (await fetch(`${url}/api/requests`, {
+    headers: { Authorization: `Bearer ${config.token}` },
+  })).json();
+}
+
+test('what an agent holds is listed with the machine holding it', async () => {
+  await withService({}, async ({ url, config }) => {
+    const agent = connectAgent(url, config.token);
+    try {
+      await agent.waitFor('welcome');
+      agent.send({ type: 'grants', grants: [GRANT] });
+      await new Promise(r => setTimeout(r, 200));
+
+      const body = await inbox(url, config);
+      assert.equal(body.agents.length, 1);
+      assert.deepEqual(body.agents[0].grants, [GRANT]);
+      assert.equal(body.agents[0].connected, true);
+    } finally {
+      agent.close();
+    }
+  });
+});
+
+test('an agent that hangs up is still listed with what it holds', async () => {
+  await withService({}, async ({ url, config }) => {
+    const agent = connectAgent(url, config.token);
+    await agent.waitFor('welcome');
+    agent.send({ type: 'grants', grants: [GRANT] });
+    await new Promise(r => setTimeout(r, 200));
+
+    // Reporting and hanging up is normal: an idle agent keeps no socket open.
+    agent.close();
+    await new Promise(r => setTimeout(r, 300));
+
+    const body = await inbox(url, config);
+    assert.equal(body.agents.length, 1, 'the pane is still handed out, so say so');
+    assert.deepEqual(body.agents[0].grants, [GRANT]);
+    assert.equal(body.agents[0].connected, false);
+  });
+});
+
+test('the same server dialling back in is one machine, not two', async () => {
+  await withService({}, async ({ url, config }) => {
+    const instanceId = randomUUID();
+    const first = connectAgent(url, config.token, { instanceId });
+    await first.waitFor('welcome');
+    first.send({ type: 'grants', grants: [GRANT] });
+    await new Promise(r => setTimeout(r, 200));
+    first.close();
+    await new Promise(r => setTimeout(r, 200));
+
+    const again = connectAgent(url, config.token, { instanceId });
+    try {
+      await again.waitFor('welcome');
+      const body = await inbox(url, config);
+      assert.equal(body.agents.length, 1);
+      assert.equal(body.agents[0].id, instanceId);
+    } finally {
+      again.close();
+    }
+  });
+});
+
+test('taking a pane back reaches a connected agent at once', async () => {
+  await withService({}, async ({ url, config }) => {
+    const agent = connectAgent(url, config.token);
+    try {
+      await agent.waitFor('welcome');
+      agent.send({ type: 'grants', grants: [GRANT] });
+      await new Promise(r => setTimeout(r, 200));
+
+      const body = await inbox(url, config);
+      const response = await fetch(`${url}/api/agents/${body.agents[0].id}/revoke`, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json', Authorization: `Bearer ${config.token}` },
+        body: JSON.stringify({ target: '%3' }),
+      });
+      assert.equal(response.status, 200);
+
+      const revoke = await agent.waitFor('revoke');
+      assert.equal(revoke.target, '%3');
+    } finally {
+      agent.close();
+    }
+  });
+});
+
+test('an agent asking about a pane is told yes until it is taken back', async () => {
+  await withService({}, async ({ url, config }) => {
+    const agent = connectAgent(url, config.token);
+    try {
+      await agent.waitFor('welcome');
+      agent.send({ type: 'grants', grants: [GRANT] });
+      await new Promise(r => setTimeout(r, 200));
+
+      agent.send({ type: 'check', id: 'c-1', target: '%3' });
+      const yes = await agent.waitFor('verdict');
+      assert.equal(yes.id, 'c-1');
+      assert.equal(yes.allowed, true);
+
+      const body = await inbox(url, config);
+      await fetch(`${url}/api/agents/${body.agents[0].id}/revoke`, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json', Authorization: `Bearer ${config.token}` },
+        body: JSON.stringify({ target: '%3' }),
+      });
+      await agent.waitFor('revoke');
+
+      agent.send({ type: 'check', id: 'c-2', target: '%3' });
+      const no = await agent.waitFor('verdict', 4000, m => m.id === 'c-2');
+      assert.equal(no.allowed, false, 'a pane taken back must not be confirmed again');
+    } finally {
+      agent.close();
+    }
   });
 });

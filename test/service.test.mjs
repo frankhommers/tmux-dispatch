@@ -525,3 +525,62 @@ test('unpairing a machine drops the socket it is using', async () => {
     ]);
   });
 });
+
+test('a pane taken back is not listed again while the agent still reports it', async () => {
+  await withService({}, async ({ url, config }) => {
+    const agent = connectAgent(url, config.token);
+    try {
+      await agent.waitFor('welcome');
+      agent.send({ type: 'grants', grants: [GRANT] });
+      await new Promise(r => setTimeout(r, 200));
+
+      const before = await inbox(url, config);
+      await fetch(`${url}/api/agents/${before.agents[0].id}/revoke`, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json', Authorization: `Bearer ${config.token}` },
+        body: JSON.stringify({ target: '%3' }),
+      });
+
+      // The agent has not noticed yet and reports the old picture.
+      agent.send({ type: 'grants', grants: [GRANT] });
+      await new Promise(r => setTimeout(r, 200));
+
+      const after = await inbox(url, config);
+      assert.deepEqual(after.agents[0].grants, [], 'what was taken back must stay out of view');
+    } finally {
+      agent.close();
+    }
+  });
+});
+
+test('handing the same pane back over makes it current again', async () => {
+  await withService({}, async ({ url, config }) => {
+    const agent = connectAgent(url, config.token);
+    try {
+      await agent.waitFor('welcome');
+      agent.send({ type: 'grants', grants: [GRANT] });
+      await new Promise(r => setTimeout(r, 200));
+
+      const before = await inbox(url, config);
+      await fetch(`${url}/api/agents/${before.agents[0].id}/revoke`, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json', Authorization: `Bearer ${config.token}` },
+        body: JSON.stringify({ target: '%3' }),
+      });
+      await agent.waitFor('revoke');
+
+      // A human hands the same pane over again: a newer assignment, so it counts.
+      agent.send({ type: 'grants', grants: [{ ...GRANT, since: Date.now() + 1000 }] });
+      await new Promise(r => setTimeout(r, 200));
+
+      const after = await inbox(url, config);
+      assert.equal(after.agents[0].grants.length, 1, 'a fresh assignment is not the old one');
+
+      agent.send({ type: 'check', id: 'c-3', target: '%3' });
+      const verdict = await agent.waitFor('verdict', 4000, m => m.id === 'c-3');
+      assert.equal(verdict.allowed, true);
+    } finally {
+      agent.close();
+    }
+  });
+});

@@ -169,8 +169,10 @@ export class AgentRegistry extends EventEmitter {
       }
       case 'grants': {
         if (!agent) return;
-        agent.grants = message.grants;
-        this.settleRevocations(agent);
+        this.settleRevocations(agent, message.grants);
+        // An agent that has not caught up yet still reports what it was told
+        // to give back. Showing that would suggest an assignment that is over.
+        agent.grants = message.grants.filter(grant => !agent.revoked.has(grant.target));
         this.emit('change', accountId);
         return;
       }
@@ -193,9 +195,9 @@ export class AgentRegistry extends EventEmitter {
    * Drop revocations the agent has caught up with: either it no longer lists
    * the target, or a human has handed the same one back since.
    */
-  private settleRevocations(agent: ConnectedAgent): void {
+  private settleRevocations(agent: ConnectedAgent, reported: WireGrant[]): void {
     for (const [target, at] of agent.revoked) {
-      const grant = agent.grants.find(g => g.target === target);
+      const grant = reported.find(g => g.target === target);
       if (!grant || grant.since > at) agent.revoked.delete(target);
     }
   }

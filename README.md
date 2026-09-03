@@ -64,6 +64,30 @@ it behind a provider that does.
 Put TLS in front for anything public. When `PUBLIC_URL` is `https://`, the
 service refuses requests forwarded as plain http.
 
+## Keeping it running on one machine
+
+For a permanent local deployment, put the settings in an `.env` beside the
+compose file rather than passing them on the command line. Compose reads it
+automatically, so a later `docker compose up -d` with no arguments cannot
+silently fall back to token mode:
+
+```bash
+cat > .env <<'EOF'
+PUBLIC_URL=http://127.0.0.1:7676
+ADMIN_PASSWORD=<at least twelve characters>
+SESSION_SECRET=<openssl rand -hex 32>
+EOF
+chmod 600 .env
+docker compose up -d
+```
+
+`.env` is gitignored. `restart: unless-stopped` brings the container back
+after a crash or a reboot — but only once the Docker daemon is running, so on
+a desktop install enable *Start Docker Desktop when you sign in* as well.
+
+The `/data` volume holds the accounts, the paired devices and the pool, so all
+of that survives a restart. Pairing is therefore a one-time step per machine.
+
 ## Connecting a machine
 
 ```bash

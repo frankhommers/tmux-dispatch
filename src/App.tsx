@@ -1,8 +1,10 @@
 import { useEffect, useState } from 'react';
-import { Inbox, LogOut, Zap } from 'lucide-react';
+import { Inbox, LogOut } from 'lucide-react';
 import { toast } from 'sonner';
 import { Button } from '@/components/ui/button';
 import { Toaster } from '@/components/ui/sonner';
+import { AgentsPanel } from '@/components/agents-panel';
+import { DevicesPanel } from '@/components/devices-panel';
 import { LinkDevice } from '@/components/link-device';
 import { PoolPanel } from '@/components/pool-panel';
 import { RequestCard } from '@/components/request-card';
@@ -43,7 +45,7 @@ export default function App() {
     onArrived(reason => {
       toast('An agent wants a pane', { description: reason });
       if (typeof Notification !== 'undefined' && Notification.permission === 'granted') {
-        new Notification('tmux-mcp: an agent wants a pane', { body: reason });
+        new Notification('tmux-dispatch: an agent wants a pane', { body: reason });
       }
     });
     onAutoAssigned(data => {
@@ -59,16 +61,17 @@ export default function App() {
   if (!signedIn) return (<><SignIn authMode={session.authMode} onSignedIn={loadSession} /><Toaster position="bottom-right" /></>);
 
   const pending = requests?.length ?? 0;
+  const held = agents.reduce((total, agent) => total + agent.grants.length, 0);
 
   return (
     <div className="aurora min-h-dvh">
       <div className="mx-auto flex w-full max-w-3xl flex-col gap-6 px-5 py-10">
         <header className="flex items-baseline justify-between gap-4">
           <div>
-            <h1 className="text-xl font-semibold tracking-tight">tmux-mcp</h1>
+            <h1 className="text-xl font-semibold tracking-tight">tmux-dispatch</h1>
             <p className="text-sm text-muted-foreground">
               {pending === 0 ? 'No agent is waiting' : `${pending} request${pending === 1 ? '' : 's'} waiting`}
-              {agents.length > 0 && ` · ${agents.length} machine${agents.length === 1 ? '' : 's'} connected`}
+              {held > 0 && ` · ${held} handed out`}
             </p>
           </div>
           <div className="flex items-center gap-3">
@@ -95,7 +98,7 @@ export default function App() {
             <p className="text-sm font-medium">Nothing is waiting</p>
             <p className="max-w-xs text-sm text-muted-foreground">
               {agents.length === 0
-                ? 'No machine is connected. An agent connects only while it has a request open.'
+                ? 'No machine is connected. An agent dials in only when it has something to say.'
                 : 'When an agent asks for a pane, it appears here by itself.'}
             </p>
           </div>
@@ -109,24 +112,9 @@ export default function App() {
 
         <PoolPanel />
 
-        {agents.length > 0 && (
-          <section>
-            <h2 className="mb-2 flex items-center gap-2 text-sm font-semibold">
-              <Zap className="size-4 text-muted-foreground" />
-              Connected machines
-            </h2>
-            <ul className="space-y-1 text-sm text-muted-foreground">
-              {agents.map(agent => (
-                <li key={agent.id} className="flex flex-wrap items-center gap-2">
-                  <span className="font-mono">{agent.identity.host}</span>
-                  <span className="opacity-70">{agent.identity.cwd}</span>
-                  <span className="opacity-70">· scope {agent.identity.scope}</span>
-                  <span className="opacity-70">· {agent.identity.client}</span>
-                </li>
-              ))}
-            </ul>
-          </section>
-        )}
+        <AgentsPanel agents={agents} onChanged={refresh} />
+
+        <DevicesPanel />
       </div>
       <Toaster position="bottom-right" />
     </div>

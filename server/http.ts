@@ -333,7 +333,10 @@ export async function startService(config: Config): Promise<Service> {
 
     const deviceMatch = path.match(/^\/api\/devices\/(\d+)$/);
     if (deviceMatch && req.method === 'DELETE') {
-      sendJson(res, store.revokeDevice(accountId, Number(deviceMatch[1])) ? 200 : 404, { ok: true });
+      const deviceId = Number(deviceMatch[1]);
+      const revoked = store.revokeDevice(accountId, deviceId);
+      if (revoked) agents.dropDevice(deviceId);
+      sendJson(res, revoked ? 200 : 404, { ok: true });
       return;
     }
 

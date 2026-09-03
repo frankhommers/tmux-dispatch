@@ -47,6 +47,7 @@ export interface SessionInfo {
 }
 
 export interface AgentIdentity {
+  instanceId?: string;
   pid: number;
   host: string;
   cwd: string;
@@ -73,10 +74,21 @@ export interface PaneRequest {
   agent: AgentIdentity | null;
 }
 
+/** A pane or window a human handed to an agent, still held by it. */
+export interface Grant {
+  target: string;
+  kind: 'pane' | 'window';
+  label: string;
+  since: number;
+}
+
 export interface ConnectedAgent {
-  id: number;
+  id: string;
   identity: AgentIdentity;
   connectedAt: number;
+  lastSeen: number;
+  connected: boolean;
+  grants: Grant[];
 }
 
 export interface PoolEntry {
@@ -108,6 +120,12 @@ export const deny = (id: string, reason: string) =>
   api<{ ok: true }>(`/api/requests/${id}/deny`, { method: 'POST', body: JSON.stringify({ reason }) });
 export const refreshTargets = (id: string) =>
   api<{ ok: true }>(`/api/requests/${id}/refresh`, { method: 'POST' });
+
+export const revokeGrant = (agentId: string, target: string) =>
+  api<{ ok: true }>(`/api/agents/${encodeURIComponent(agentId)}/revoke`, {
+    method: 'POST',
+    body: JSON.stringify({ target }),
+  });
 
 export const listPool = () => api<{ pool: PoolEntry[] }>('/api/pool');
 export const addPoolEntry = (pattern: string, kind: 'pane' | 'window', reusable: boolean) =>

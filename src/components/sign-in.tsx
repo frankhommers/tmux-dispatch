@@ -69,7 +69,7 @@ function Shell({ children }: { children: React.ReactNode }) {
     <div className="aurora flex min-h-dvh items-center justify-center p-6">
       <Card className="w-full max-w-sm border-border/60 shadow-xl shadow-black/10">
         <CardHeader>
-          <h1 className="text-lg font-semibold tracking-tight">tmux-mcp</h1>
+          <h1 className="text-lg font-semibold tracking-tight">tmux-dispatch</h1>
         </CardHeader>
         <CardContent className="flex flex-col gap-4">{children}</CardContent>
       </Card>

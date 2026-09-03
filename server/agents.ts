@@ -259,7 +259,27 @@ export class AgentRegistry extends EventEmitter {
     return true;
   }
 
-  markAutoAssigned(id: string, target: string, entryId: number): void {
+  /**
+   * A machine whose pairing was revoked: close what it has open and forget it.
+   * It cannot dial back in, so keeping its grants in view would suggest a
+   * take-back that could never be delivered.
+   */
+  dropDevice(deviceId: number): void {
+    for (const [id, agent] of [...this.agents]) {
+      if (agent.deviceId !== deviceId) continue;
+      const socket = this.sockets.get(id);
+      this.sockets.delete(id);
+      this.agents.delete(id);
+      for (const [requestId, request] of this.requests) {
+        if (request.agentId === id) this.requests.delete(requestId);
+      }
+      socket?.close();
+      this.emit('change', agent.accountId);
+    }
+  }
+
+  markAutoAssigned(
+id: string, target: string, entryId: number): void {
     const request = this.requests.get(id);
     if (request) request.autoAssigned = { target, entryId };
   }

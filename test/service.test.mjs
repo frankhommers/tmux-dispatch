@@ -5,6 +5,7 @@ import { WebSocket } from 'ws';
 
 import { loadConfig } from '../server-dist/config.js';
 import { startService } from '../server-dist/http.js';
+import { localAccount } from '../server-dist/auth.js';
 
 const PROTOCOL_VERSION = '1.1';
 
@@ -500,5 +501,27 @@ test('an agent asking about a pane is told yes until it is taken back', async ()
     } finally {
       agent.close();
     }
+  });
+});
+
+test('unpairing a machine drops the socket it is using', async () => {
+  await withService({}, async ({ url, config, service }) => {
+    const account = localAccount(service.store);
+    const { device, token } = service.store.createDevice(account.id, 'frank-mbp');
+
+    const agent = connectAgent(url, token);
+    await agent.waitFor('welcome');
+    const closed = new Promise(resolve => agent.socket.on('close', resolve));
+
+    const response = await fetch(`${url}/api/devices/${device.id}`, {
+      method: 'DELETE',
+      headers: { Authorization: `Bearer ${config.token}` },
+    });
+    assert.equal(response.status, 200);
+
+    await Promise.race([
+      closed,
+      new Promise((_, reject) => setTimeout(() => reject(new Error('the socket stayed open')), 2000)),
+    ]);
   });
 });

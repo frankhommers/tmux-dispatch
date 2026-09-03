@@ -1,0 +1,79 @@
+import { useEffect, useState } from 'react';
+import { Laptop, Trash2 } from 'lucide-react';
+import { toast } from 'sonner';
+import { Button } from '@/components/ui/button';
+import { Card, CardContent, CardHeader } from '@/components/ui/card';
+import { listDevices, revokeDevice, type Device } from '@/lib/api';
+
+function ago(at: number | null): string {
+  if (!at) return 'never used';
+  const seconds = Math.max(0, Math.round((Date.now() - at) / 1000));
+  if (seconds < 60) return 'seen just now';
+  if (seconds < 3600) return `seen ${Math.round(seconds / 60)}m ago`;
+  if (seconds < 86_400) return `seen ${Math.round(seconds / 3600)}h ago`;
+  return `seen ${Math.round(seconds / 86_400)}d ago`;
+}
+
+/**
+ * The machines allowed to connect at all. Revoking one here drops its token:
+ * a different thing from taking a pane back, which only ends one assignment.
+ */
+export function DevicesPanel() {
+  const [devices, setDevices] = useState<Device[]>([]);
+
+  const load = async () => {
+    try {
+      setDevices((await listDevices()).devices);
+    } catch (cause) {
+      toast.error((cause as Error).message);
+    }
+  };
+
+  useEffect(() => { void load(); }, []);
+
+  return (
+    <Card className="border-border/60">
+      <CardHeader className="gap-1">
+        <div className="flex items-center gap-2">
+          <Laptop className="size-4 text-muted-foreground" />
+          <h2 className="text-sm font-semibold">Paired machines</h2>
+        </div>
+        <p className="text-sm text-muted-foreground">
+          Machines that may connect. Pair one with <code className="font-mono">tmux-mcp dispatch-login</code>.
+        </p>
+      </CardHeader>
+      <CardContent>
+        {devices.length === 0 ? (
+          <p className="text-sm text-muted-foreground">Nothing paired yet.</p>
+        ) : (
+          <ul className="space-y-1">
+            {devices.map(device => (
+              <li key={device.id} className="flex items-center gap-2 rounded-lg px-2 py-1.5 hover:bg-accent/60">
+                <span className="font-mono text-sm">{device.name}</span>
+                <span className="flex-1" />
+                <span className="text-xs text-muted-foreground">{ago(device.lastSeenAt)}</span>
+                <Button
+                  size="sm"
+                  variant="ghost"
+                  aria-label={`Unpair ${device.name}`}
+                  title="Unpair this machine"
+                  onClick={async () => {
+                    try {
+                      await revokeDevice(device.id);
+                      toast.success(`Unpaired ${device.name}`);
+                      void load();
+                    } catch (cause) {
+                      toast.error((cause as Error).message);
+                    }
+                  }}
+                >
+                  <Trash2 className="size-3.5" />
+                </Button>
+              </li>
+            ))}
+          </ul>
+        )}
+      </CardContent>
+    </Card>
+  );
+}

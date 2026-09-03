@@ -1,7 +1,9 @@
 /**
- * The token arrives once in the query string and then lives in sessionStorage,
- * so refreshing or following a deep link keeps working without it in the URL.
- * The app shell is served without a token; only these calls need it.
+ * Everything the page asks of the service.
+ *
+ * In token mode the token arrives once in the query string and then lives in
+ * sessionStorage; in password and OIDC mode a session cookie does the work
+ * and the token is simply absent.
  */
 const TOKEN_KEY = 'tmux-mcp-token';
 
@@ -19,30 +21,38 @@ function readToken(): string {
 
 export const token = readToken();
 
-export class ApiError extends Error {}
+export class ApiError extends Error {
+  constructor(message: string, readonly status: number) {
+    super(message);
+  }
+}
 
 async function api<T>(path: string, init: RequestInit = {}): Promise<T> {
-  const res = await fetch(path, {
-    ...init,
-    headers: {
-      Authorization: `Bearer ${token}`,
-      'content-type': 'application/json',
-      ...(init.headers ?? {}),
-    },
-  });
+  const headers: Record<string, string> = { 'content-type': 'application/json', ...(init.headers as Record<string, string> ?? {}) };
+  if (token) headers.Authorization = `Bearer ${token}`;
+  const res = await fetch(path, { ...init, headers, credentials: 'same-origin' });
   if (!res.ok) {
     const body = (await res.json().catch(() => ({}))) as { error?: string };
-    throw new ApiError(body.error ?? res.statusText);
+    throw new ApiError(body.error ?? res.statusText, res.status);
   }
   return res.json() as Promise<T>;
 }
 
-export interface PaneRequest {
-  id: string;
-  reason: string;
-  kind: 'pane' | 'window';
-  createdAt: number;
-  ageSeconds: number;
+export type AuthMode = 'token' | 'password' | 'oidc';
+
+export interface SessionInfo {
+  authMode: AuthMode;
+  signedIn: boolean;
+  account: string | null;
+}
+
+export interface AgentIdentity {
+  pid: number;
+  host: string;
+  cwd: string;
+  tmuxSession: string | null;
+  scope: string;
+  client: string;
 }
 
 export interface Target {
@@ -50,39 +60,79 @@ export interface Target {
   label: string;
 }
 
-export function listRequests() {
-  return api<{ requests: PaneRequest[] }>('/api/requests');
+export interface PaneRequest {
+  id: string;
+  reason: string;
+  kind: 'pane' | 'window';
+  createdAt: number;
+  expiresAt: number;
+  ageSeconds: number;
+  candidates: Target[];
+  autoAssigned: { target: string; entryId: number } | null;
+  lastError: string | null;
+  agent: AgentIdentity | null;
 }
 
-export function listTargets(requestId: string) {
-  return api<{ targets: Target[] }>(`/api/requests/${requestId}/targets`);
+export interface ConnectedAgent {
+  id: number;
+  identity: AgentIdentity;
+  connectedAt: number;
 }
 
-export function grant(requestId: string, target: string) {
-  return api<{ ok: true }>(`/api/requests/${requestId}/grant`, {
-    method: 'POST',
-    body: JSON.stringify({ target }),
-  });
+export interface PoolEntry {
+  id: number;
+  pattern: string;
+  kind: 'pane' | 'window';
+  reusable: boolean;
+  usedAt: number | null;
+  createdAt: number;
 }
 
-export function deny(requestId: string, reason: string) {
-  return api<{ ok: true }>(`/api/requests/${requestId}/deny`, {
-    method: 'POST',
-    body: JSON.stringify({ reason }),
-  });
+export interface Device {
+  id: number;
+  name: string;
+  createdAt: number;
+  lastSeenAt: number | null;
 }
+
+export const getSession = () => api<SessionInfo>('/api/session');
+export const login = (password: string) =>
+  api<{ ok: true }>('/api/login', { method: 'POST', body: JSON.stringify({ password }) });
+export const logout = () => api<{ ok: true }>('/api/logout', { method: 'POST' });
+
+export const listRequests = () =>
+  api<{ requests: PaneRequest[]; agents: ConnectedAgent[] }>('/api/requests');
+export const grant = (id: string, target: string) =>
+  api<{ ok: true }>(`/api/requests/${id}/grant`, { method: 'POST', body: JSON.stringify({ target }) });
+export const deny = (id: string, reason: string) =>
+  api<{ ok: true }>(`/api/requests/${id}/deny`, { method: 'POST', body: JSON.stringify({ reason }) });
+export const refreshTargets = (id: string) =>
+  api<{ ok: true }>(`/api/requests/${id}/refresh`, { method: 'POST' });
+
+export const listPool = () => api<{ pool: PoolEntry[] }>('/api/pool');
+export const addPoolEntry = (pattern: string, kind: 'pane' | 'window', reusable: boolean) =>
+  api<{ entry: PoolEntry }>('/api/pool', { method: 'POST', body: JSON.stringify({ pattern, kind, reusable }) });
+export const removePoolEntry = (id: number) =>
+  api<{ ok: true }>(`/api/pool/${id}`, { method: 'DELETE' });
+export const resetPoolEntry = (id: number) =>
+  api<{ ok: true }>(`/api/pool/${id}`, { method: 'POST' });
+
+export const listDevices = () => api<{ devices: Device[] }>('/api/devices');
+export const revokeDevice = (id: number) =>
+  api<{ ok: true }>(`/api/devices/${id}`, { method: 'DELETE' });
+export const lookupPairing = (userCode: string) =>
+  api<{ name: string }>('/api/pair/lookup', { method: 'POST', body: JSON.stringify({ userCode }) });
+export const approvePairing = (userCode: string) =>
+  api<{ ok: true }>('/api/pair/approve', { method: 'POST', body: JSON.stringify({ userCode }) });
+export const denyPairing = (userCode: string) =>
+  api<{ ok: true }>('/api/pair/deny', { method: 'POST', body: JSON.stringify({ userCode }) });
 
 /**
- * A tmux label is "%3  session:window.0  zsh  "title"", built by the server.
- * Splitting it here lets the row show the id and command prominently and the
- * location and title quietly, instead of one long monospace string.
+ * A tmux label is "%3  session:window.0  zsh  "title"". Splitting it lets a
+ * row show the id and command prominently and the rest quietly, rather than
+ * one long monospace string.
  */
-export function parseLabel(label: string): {
-  id: string;
-  location: string;
-  command: string;
-  title: string;
-} {
+export function parseLabel(label: string): { id: string; location: string; command: string; title: string } {
   const parts = label.split(/\s{2,}/);
   return {
     id: parts[0] ?? label,

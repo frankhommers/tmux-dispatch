@@ -1,5 +1,7 @@
 import { useState } from 'react';
+import { toast } from 'sonner';
 import { Button } from '@/components/ui/button';
+import { deny } from '@/lib/api';
 import {
   Dialog,
   DialogContent,
@@ -12,14 +14,15 @@ import {
 
 interface Props {
   reason: string;
-  onDeny: (note: string) => void;
+  requestId: string;
+  onDenied: () => void;
 }
 
 /**
  * Denying is deliberately two steps: it ends the agent's request, and the note
  * is the only thing the agent is told about why.
  */
-export function DenyDialog({ reason, onDeny }: Props) {
+export function DenyDialog({ reason, requestId, onDenied }: Props) {
   const [open, setOpen] = useState(false);
   const [note, setNote] = useState('');
 
@@ -51,8 +54,14 @@ export function DenyDialog({ reason, onDeny }: Props) {
           </Button>
           <Button
             variant="destructive"
-            onClick={() => {
-              onDeny(note);
+            onClick={async () => {
+              try {
+                await deny(requestId, note);
+                toast('Request denied');
+                onDenied();
+              } catch (cause) {
+                toast.error((cause as Error).message);
+              }
               setOpen(false);
             }}
           >

@@ -1,0 +1,20 @@
+services:
+  tmux-mcp-ui:
+    build: .
+    # Publish on loopback for a local deployment; put a TLS proxy in front
+    # when this is reachable from the internet.
+    ports: ["127.0.0.1:7676:7676"]
+    environment:
+      PUBLIC_URL: http://127.0.0.1:7676
+      # Pick one sign-in method:
+      #   ADMIN_PASSWORD: "at least twelve characters"
+      #   OIDC_ISSUER / OIDC_CLIENT_ID / OIDC_CLIENT_SECRET
+      # With neither, the service uses a token printed at startup.
+      SESSION_SECRET: "change-me"
+      DATABASE_PATH: /data/tmux-mcp.db
+    volumes:
+      - tmux-mcp-ui:/data
+    restart: unless-stopped
+
+volumes:
+  tmux-mcp-ui:

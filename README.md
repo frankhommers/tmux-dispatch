@@ -103,7 +103,7 @@ are listed and revoked from dispatch; revoking drops the socket.
 ## Taking a pane back
 
 Every agent reports what it currently holds, so dispatch lists each machine
-with its panes. "Take back" ends one assignment; unpairing ends the machine's
+with its panes. "Revoke" ends one assignment; unpairing ends the machine's
 access altogether.
 
 Because an agent asks dispatch before each action on a pane it holds, taking

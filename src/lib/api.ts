@@ -80,6 +80,8 @@ export interface Grant {
   kind: 'pane' | 'window';
   label: string;
   since: number;
+  /** When the agent last asked about it, which is when it last acted on it. */
+  lastActivity: number | null;
 }
 
 export interface ConnectedAgent {

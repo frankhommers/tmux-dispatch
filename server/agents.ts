@@ -50,6 +50,11 @@ export interface ConnectedAgent {
   grants: WireGrant[];
   /** Targets the human took back, and when. A check for one of these is refused. */
   revoked: Map<string, number>;
+  /**
+   * When each target was last acted on. An agent asks before every action, so
+   * its checks are the only activity dispatch can honestly report.
+   */
+  activity: Map<string, number>;
 }
 
 let nextAnonymousId = 1;
@@ -92,6 +97,7 @@ export class AgentRegistry extends EventEmitter {
           connected: true,
           grants: known?.grants ?? [],
           revoked: known?.revoked ?? new Map(),
+          activity: known?.activity ?? new Map(),
         });
         this.send(socket, { type: 'welcome', protocolVersion: PROTOCOL_VERSION, account: accountName });
         this.emit('change', accountId);
@@ -179,6 +185,8 @@ export class AgentRegistry extends EventEmitter {
       case 'check': {
         const socket = this.sockets.get(agentId);
         if (!socket) return;
+        agent?.activity.set(message.target, Date.now());
+        this.emit('change', accountId);
         this.send(socket, {
           type: 'verdict',
           id: message.id,

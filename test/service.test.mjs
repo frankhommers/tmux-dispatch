@@ -402,7 +402,7 @@ test('what an agent holds is listed with the machine holding it', async () => {
 
       const body = await inbox(url, config);
       assert.equal(body.agents.length, 1);
-      assert.deepEqual(body.agents[0].grants, [GRANT]);
+      assert.deepEqual(body.agents[0].grants, [{ ...GRANT, lastActivity: null }]);
       assert.equal(body.agents[0].connected, true);
     } finally {
       agent.close();
@@ -423,7 +423,7 @@ test('an agent that hangs up is still listed with what it holds', async () => {
 
     const body = await inbox(url, config);
     assert.equal(body.agents.length, 1, 'the pane is still handed out, so say so');
-    assert.deepEqual(body.agents[0].grants, [GRANT]);
+    assert.deepEqual(body.agents[0].grants, [{ ...GRANT, lastActivity: null }]);
     assert.equal(body.agents[0].connected, false);
   });
 });
@@ -613,6 +613,30 @@ test('a machine that is gone and holds nothing is not listed, but is still refus
       assert.equal(verdict.allowed, false);
     } finally {
       again.close();
+    }
+  });
+});
+
+test('a check is activity, and is shown with the pane it was about', async () => {
+  await withService({}, async ({ url, config }) => {
+    const agent = connectAgent(url, config.token);
+    try {
+      await agent.waitFor('welcome');
+      agent.send({ type: 'grants', grants: [GRANT] });
+      await new Promise(r => setTimeout(r, 200));
+
+      const idle = await inbox(url, config);
+      assert.equal(idle.agents[0].grants[0].lastActivity, null, 'nothing has happened yet');
+
+      const before = Date.now();
+      agent.send({ type: 'check', id: 'c-a', target: '%3' });
+      await agent.waitFor('verdict', 4000, m => m.id === 'c-a');
+
+      const busy = await inbox(url, config);
+      const activity = busy.agents[0].grants[0].lastActivity;
+      assert.ok(activity >= before, `the pane should show recent use, got ${activity}`);
+    } finally {
+      agent.close();
     }
   });
 });

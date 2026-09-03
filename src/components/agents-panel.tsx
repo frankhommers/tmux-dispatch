@@ -30,11 +30,11 @@ export function AgentsPanel({ agents, onChanged }: Props) {
 
   if (agents.length === 0) return null;
 
-  const takeBack = async (agent: ConnectedAgent, target: string) => {
+  const revoke = async (agent: ConnectedAgent, target: string) => {
     setBusy(`${agent.id}:${target}`);
     try {
       await revokeGrant(agent.id, target);
-      toast.success(`Took ${target} back`, {
+      toast.success(`Revoked ${target}`, {
         description: agent.connected ? undefined : 'Lands at its next action.',
       });
       onChanged();
@@ -97,16 +97,17 @@ export function AgentsPanel({ agents, onChanged }: Props) {
                         {location}
                         {title && <span className="ml-2 opacity-70">{title}</span>}
                       </span>
-                      <span className="text-xs text-muted-foreground/80">since {ago(grant.since)}</span>
+                      <span className="text-xs text-muted-foreground/80">
+                        {grant.lastActivity ? `used ${ago(grant.lastActivity)}` : `since ${ago(grant.since)}`}
+                      </span>
                       <Button
                         size="sm"
                         variant="ghost"
-                        aria-label={`Take back ${grant.target}`}
-                        title="Take it back"
-                        onClick={() => void takeBack(agent, grant.target)}
+                        aria-label={`Revoke ${grant.target}`}
+                        onClick={() => void revoke(agent, grant.target)}
                       >
                         <Undo2 className="size-3.5" />
-                        Take back
+                        Revoke
                       </Button>
                     </li>
                   );

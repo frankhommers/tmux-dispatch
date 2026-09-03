@@ -256,7 +256,10 @@ export async function startService(config: Config): Promise<Service> {
           connectedAt: agent.connectedAt,
           lastSeen: agent.lastSeen,
           connected: agent.connected,
-          grants: agent.grants,
+          grants: agent.grants.map(grant => ({
+            ...grant,
+            lastActivity: agent.activity.get(grant.target) ?? null,
+          })),
         })),
       });
       return;

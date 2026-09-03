@@ -38,13 +38,12 @@ export function DevicesPanel() {
           <Laptop className="size-4 text-muted-foreground" />
           <h2 className="text-sm font-semibold">Paired machines</h2>
         </div>
-        <p className="text-sm text-muted-foreground">
-          Machines that may connect. Pair one with <code className="font-mono">tmux-mcp dispatch-login</code>.
-        </p>
       </CardHeader>
       <CardContent>
         {devices.length === 0 ? (
-          <p className="text-sm text-muted-foreground">Nothing paired yet.</p>
+          <p className="text-sm text-muted-foreground">
+            Nothing paired. Run <code className="font-mono">tmux-mcp dispatch-login</code>.
+          </p>
         ) : (
           <ul className="space-y-1">
             {devices.map(device => (

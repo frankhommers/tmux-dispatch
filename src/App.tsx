@@ -96,11 +96,6 @@ export default function App() {
           <div className="flex flex-col items-center gap-3 rounded-xl border border-dashed border-border/70 py-16 text-center">
             <Inbox className="size-8 text-muted-foreground/60" />
             <p className="text-sm font-medium">Nothing is waiting</p>
-            <p className="max-w-xs text-sm text-muted-foreground">
-              {agents.length === 0
-                ? 'No machine is connected. An agent dials in only when it has something to say.'
-                : 'When an agent asks for a pane, it appears here by itself.'}
-            </p>
           </div>
         ) : (
           <div className="space-y-4">

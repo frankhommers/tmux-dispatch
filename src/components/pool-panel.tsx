@@ -33,11 +33,7 @@ export function PoolPanel() {
           <Zap className="size-4 text-live" />
           <h2 className="text-sm font-semibold">Assign without asking</h2>
         </div>
-        <p className="text-sm text-muted-foreground">
-          A request matching one of these is answered immediately, and shows up
-          here afterwards. Use a pane id like <code className="font-mono">%3</code>,
-          or a pattern like <code className="font-mono">*agents:*</code>.
-        </p>
+        <p className="text-sm text-muted-foreground">Matching requests are answered at once.</p>
       </CardHeader>
       <CardContent className="flex flex-col gap-3">
         <form
@@ -71,9 +67,7 @@ export function PoolPanel() {
         </form>
 
         {pool.length === 0 ? (
-          <p className="text-sm text-muted-foreground">
-            Nothing pre-assigned. Every request will wait for you.
-          </p>
+          <p className="text-sm text-muted-foreground">Nothing pre-assigned.</p>
         ) : (
           <ul className="space-y-1">
             {pool.map(entry => (

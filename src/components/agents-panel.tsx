@@ -35,9 +35,7 @@ export function AgentsPanel({ agents, onChanged }: Props) {
     try {
       await revokeGrant(agent.id, target);
       toast.success(`Took ${target} back`, {
-        description: agent.connected
-          ? 'The agent has been told.'
-          : 'The agent is not listening; it will be refused at its next action.',
+        description: agent.connected ? undefined : 'Lands at its next action.',
       });
       onChanged();
     } catch (cause) {
@@ -52,12 +50,8 @@ export function AgentsPanel({ agents, onChanged }: Props) {
       <CardHeader className="gap-1">
         <div className="flex items-center gap-2">
           <TerminalSquare className="size-4 text-muted-foreground" />
-          <h2 className="text-sm font-semibold">Machines and what they hold</h2>
+          <h2 className="text-sm font-semibold">Machines</h2>
         </div>
-        <p className="text-sm text-muted-foreground">
-          Taking something back is asked about before the agent's next action, so
-          it lands even while nothing is connected.
-        </p>
       </CardHeader>
       <CardContent className="flex flex-col gap-4">
         {agents.map(agent => (
@@ -79,7 +73,7 @@ export function AgentsPanel({ agents, onChanged }: Props) {
             </div>
 
             {agent.grants.length === 0 ? (
-              <p className="text-sm text-muted-foreground">Holds nothing right now.</p>
+              <p className="text-sm text-muted-foreground">Nothing held.</p>
             ) : (
               <ul className="space-y-1">
                 {agent.grants.map(grant => {

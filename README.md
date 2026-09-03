@@ -38,6 +38,14 @@ hosted deployment without opening a port, and nothing on it listens.
 docker compose up -d
 ```
 
+Compose passes the settings through from your environment or an `.env` file
+beside it, so nothing has to be edited into the file:
+
+```bash
+ADMIN_PASSWORD='at-least-twelve' SESSION_SECRET="$(openssl rand -hex 32)" \
+  docker compose up -d
+```
+
 Sign-in is chosen by what you configure:
 
 | Configured | You get |

@@ -5,13 +5,20 @@ services:
     # when this is reachable from the internet.
     ports: ["127.0.0.1:7676:7676"]
     environment:
-      PUBLIC_URL: http://127.0.0.1:7676
-      # Pick one sign-in method:
-      #   ADMIN_PASSWORD: "at least twelve characters"
-      #   OIDC_ISSUER / OIDC_CLIENT_ID / OIDC_CLIENT_SECRET
-      # With neither, the service uses a token printed at startup.
-      SESSION_SECRET: "change-me"
+      PUBLIC_URL: ${PUBLIC_URL:-http://127.0.0.1:7676}
       DATABASE_PATH: /data/tmux-mcp.db
+      SESSION_SECRET: ${SESSION_SECRET:-change-me}
+      # Sign-in is picked by what you set. Leaving these empty is not an
+      # error: the service falls back to a token printed at startup.
+      #   ADMIN_PASSWORD  a single password prompt, 12 characters or more
+      #   OIDC_*          any provider with OIDC discovery
+      ADMIN_PASSWORD: ${ADMIN_PASSWORD:-}
+      ADMIN_PASSWORD_HASH: ${ADMIN_PASSWORD_HASH:-}
+      OIDC_ISSUER: ${OIDC_ISSUER:-}
+      OIDC_CLIENT_ID: ${OIDC_CLIENT_ID:-}
+      OIDC_CLIENT_SECRET: ${OIDC_CLIENT_SECRET:-}
+      OIDC_ALLOWED_SUBS: ${OIDC_ALLOWED_SUBS:-}
+      AUTH_MODE: ${AUTH_MODE:-}
     volumes:
       - tmux-mcp-ui:/data
     restart: unless-stopped

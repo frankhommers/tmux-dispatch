@@ -80,6 +80,8 @@ export interface Grant {
   kind: 'pane' | 'window';
   label: string;
   since: number;
+  /** Why it was asked for, kept after the request itself is gone. */
+  reason?: string;
   /** When the agent last asked about it, which is when it last acted on it. */
   lastActivity: number | null;
 }

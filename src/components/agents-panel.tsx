@@ -77,7 +77,7 @@ export function AgentsPanel({ agents, onChanged }: Props) {
             ) : (
               <ul className="space-y-1">
                 {agent.grants.map(grant => {
-                  const { location, command, title } = parseLabel(grant.label);
+                  const { location, command } = parseLabel(grant.label);
                   const key = `${agent.id}:${grant.target}`;
                   return (
                     <li
@@ -95,7 +95,7 @@ export function AgentsPanel({ agents, onChanged }: Props) {
                       )}
                       <span className="min-w-0 flex-1 truncate text-sm text-muted-foreground">
                         {location}
-                        {title && <span className="ml-2 opacity-70">{title}</span>}
+                        {grant.reason && <span className="ml-2 opacity-70">{grant.reason}</span>}
                       </span>
                       <span className="text-xs text-muted-foreground/80">
                         {grant.lastActivity ? `used ${ago(grant.lastActivity)}` : `since ${ago(grant.since)}`}

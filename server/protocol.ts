@@ -6,7 +6,7 @@
  * independently anyway. PROTOCOL_VERSION is what keeps them honest.
  */
 
-export const PROTOCOL_VERSION = '1.1';
+export const PROTOCOL_VERSION = '1.2';
 
 export function protocolMajor(version: string): string {
   return version.split('.')[0] ?? '';
@@ -42,6 +42,8 @@ export interface WireGrant {
   kind: 'pane' | 'window';
   label: string;
   since: number;
+  /** Why it was asked for. Absent from 1.1 servers. */
+  reason?: string;
 }
 
 export type ServerToDispatch =

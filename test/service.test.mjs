@@ -7,7 +7,7 @@ import { loadConfig } from '../server-dist/config.js';
 import { startService } from '../server-dist/http.js';
 import { localAccount } from '../server-dist/auth.js';
 
-const PROTOCOL_VERSION = '1.1';
+const PROTOCOL_VERSION = '1.2';
 
 async function withService(env, run) {
   const config = loadConfig({ PORT: '0', DATABASE_PATH: ':memory:', SESSION_SECRET: 'test-secret', ...env });
@@ -635,6 +635,22 @@ test('a check is activity, and is shown with the pane it was about', async () =>
       const busy = await inbox(url, config);
       const activity = busy.agents[0].grants[0].lastActivity;
       assert.ok(activity >= before, `the pane should show recent use, got ${activity}`);
+    } finally {
+      agent.close();
+    }
+  });
+});
+
+test('why a pane was handed over is kept with it', async () => {
+  await withService({}, async ({ url, config }) => {
+    const agent = connectAgent(url, config.token);
+    try {
+      await agent.waitFor('welcome');
+      agent.send({ type: 'grants', grants: [{ ...GRANT, reason: 'run the suite' }] });
+      await new Promise(r => setTimeout(r, 200));
+
+      const body = await inbox(url, config);
+      assert.equal(body.agents[0].grants[0].reason, 'run the suite');
     } finally {
       agent.close();
     }

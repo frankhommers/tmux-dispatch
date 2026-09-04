@@ -14,10 +14,20 @@ function ageLabel(seconds: number): string {
   return `${Math.round(seconds / 3600)}h ago`;
 }
 
+/**
+ * tmux names panes `%3` and windows `@5`. Someone reading a number off their
+ * screen types the number, so accept that too rather than refusing it.
+ */
+function normalise(input: string, kind: 'pane' | 'window'): string {
+  const value = input.trim();
+  return /^\d+$/.test(value) ? `${kind === 'window' ? '@' : '%'}${value}` : value;
+}
+
 export function RequestCard({ request, onChanged }: { request: PaneRequest; onChanged: () => void }) {
   const [selected, setSelected] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   const [refreshing, setRefreshing] = useState(false);
+  const [typed, setTyped] = useState('');
 
   // Arrow keys walk the list; Enter assigns whatever is highlighted.
   useEffect(() => {
@@ -114,9 +124,27 @@ export function RequestCard({ request, onChanged }: { request: PaneRequest; onCh
       </CardContent>
 
       <CardFooter className="justify-between gap-3 border-t border-border/60 !py-3">
-        <p className="text-xs text-muted-foreground">
-          Opened a {request.kind} just now? Refresh — the agent will look again.
-        </p>
+        <form
+          className="flex items-center gap-2"
+          onSubmit={event => {
+            event.preventDefault();
+            const target = normalise(typed, request.kind);
+            if (target) void assign(target);
+          }}
+        >
+          <input
+            value={typed}
+            onChange={event => setTyped(event.target.value)}
+            placeholder={request.kind === 'window' ? '@5' : '%3'}
+            aria-label={`Assign a ${request.kind} by id`}
+            className="h-8 w-20 rounded-md border border-input bg-transparent px-2 font-mono text-sm outline-none transition focus-visible:border-ring focus-visible:ring-[3px] focus-visible:ring-ring/50"
+          />
+          {/* Not disabled while empty: a disabled submit button also blocks
+              pressing Enter in the field, and an empty submit is already a no-op. */}
+          <Button type="submit" size="sm" variant="secondary" disabled={busy}>
+            Assign
+          </Button>
+        </form>
         <div className="flex items-center gap-1">
           <Button variant="ghost" size="sm" onClick={() => void refresh()} disabled={refreshing}>
             <RefreshCw className={refreshing ? 'size-3.5 animate-spin' : 'size-3.5'} />

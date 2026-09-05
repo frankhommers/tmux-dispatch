@@ -7,7 +7,7 @@ import { loadConfig } from '../server-dist/config.js';
 import { startService } from '../server-dist/http.js';
 import { localAccount } from '../server-dist/auth.js';
 
-const PROTOCOL_VERSION = '1.2';
+const PROTOCOL_VERSION = '1.3';
 
 async function withService(env, run) {
   const config = loadConfig({ PORT: '0', DATABASE_PATH: ':memory:', SESSION_SECRET: 'test-secret', ...env });
@@ -651,6 +651,26 @@ test('why a pane was handed over is kept with it', async () => {
 
       const body = await inbox(url, config);
       assert.equal(body.agents[0].grants[0].reason, 'run the suite');
+    } finally {
+      agent.close();
+    }
+  });
+});
+
+test('a suggestion travels with the request, without deciding anything', async () => {
+  await withService({}, async ({ url, config }) => {
+    const agent = connectAgent(url, config.token);
+    try {
+      await agent.waitFor('welcome');
+      agent.send({ ...REQUEST, id: 'r-sug', suggested: '%5' });
+      await new Promise(r => setTimeout(r, 200));
+
+      const body = await (await fetch(`${url}/api/requests`, {
+        headers: { Authorization: `Bearer ${config.token}` },
+      })).json();
+      assert.equal(body.requests.length, 1, 'a suggestion is not an answer; the request still waits');
+      assert.equal(body.requests[0].suggested, '%5');
+      assert.equal(agent.received.some(m => m.type === 'answer'), false, 'nothing may be assigned on its own');
     } finally {
       agent.close();
     }

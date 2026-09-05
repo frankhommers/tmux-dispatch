@@ -246,6 +246,7 @@ export async function startService(config: Config): Promise<Service> {
           expiresAt: request.expiresAt,
           ageSeconds: Math.round((Date.now() - request.createdAt) / 1000),
           candidates: request.candidates,
+          suggested: request.suggested ?? null,
           autoAssigned: request.autoAssigned ?? null,
           lastError: request.lastError ?? null,
           agent: agents.agentOf(request.id)?.identity ?? null,

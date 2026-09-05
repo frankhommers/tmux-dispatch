@@ -7,11 +7,13 @@ interface Props {
   target: Target;
   busy: boolean;
   selected: boolean;
+  /** The agent asked for this one by name. */
+  suggested?: boolean;
   onSelect: () => void;
   onAssign: () => void;
 }
 
-export function TargetRow({ target, busy, selected, onSelect, onAssign }: Props) {
+export function TargetRow({ target, busy, selected, suggested, onSelect, onAssign }: Props) {
   const { id, location, command, title } = parseLabel(target.label);
 
   return (
@@ -41,6 +43,10 @@ export function TargetRow({ target, busy, selected, onSelect, onAssign }: Props)
         <TerminalSquare className="size-4 shrink-0 text-muted-foreground" />
 
         <span className="font-mono text-sm font-medium tabular-nums">{id}</span>
+
+        {suggested && (
+          <span className="rounded-md bg-live/15 px-1.5 py-0.5 text-xs text-live">asked for</span>
+        )}
 
         {command && (
           <span className="rounded-md bg-muted px-1.5 py-0.5 font-mono text-xs text-muted-foreground">

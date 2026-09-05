@@ -69,6 +69,8 @@ export interface PaneRequest {
   expiresAt: number;
   ageSeconds: number;
   candidates: Target[];
+  /** What the agent would like, if it said so. A hint; the human still chooses. */
+  suggested: string | null;
   autoAssigned: { target: string; entryId: number } | null;
   lastError: string | null;
   agent: AgentIdentity | null;

@@ -33,6 +33,8 @@ export interface OpenRequest {
   createdAt: number;
   expiresAt: number;
   candidates: WireCandidate[];
+  /** What the agent would like, if it said. A hint, never matched automatically. */
+  suggested?: string;
   /** Set when the pool answered it without asking a human. */
   autoAssigned?: { target: string; entryId: number };
   /** Last failure reported by the agent, shown to the human. */
@@ -142,6 +144,7 @@ export class AgentRegistry extends EventEmitter {
           createdAt: message.createdAt,
           expiresAt: message.expiresAt,
           candidates: message.candidates,
+          suggested: message.suggested,
         });
         this.emit('request', accountId, this.requests.get(message.id)!);
         this.emit('change', accountId);

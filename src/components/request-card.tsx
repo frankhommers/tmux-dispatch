@@ -24,10 +24,14 @@ function normalise(input: string, kind: 'pane' | 'window'): string {
 }
 
 export function RequestCard({ request, onChanged }: { request: PaneRequest; onChanged: () => void }) {
-  const [selected, setSelected] = useState<string | null>(null);
+  const offered = request.suggested !== null
+    && request.candidates.some(candidate => candidate.id === request.suggested);
+  const [selected, setSelected] = useState<string | null>(offered ? request.suggested : null);
   const [busy, setBusy] = useState(false);
   const [refreshing, setRefreshing] = useState(false);
-  const [typed, setTyped] = useState('');
+  // A pane the agent named but did not offer can only be assigned by id, so
+  // put it in the field rather than making someone retype it.
+  const [typed, setTyped] = useState(offered ? '' : request.suggested ?? '');
 
   // Arrow keys walk the list; Enter assigns whatever is highlighted.
   useEffect(() => {
@@ -111,6 +115,7 @@ export function RequestCard({ request, onChanged }: { request: PaneRequest; onCh
                 target={target}
                 busy={busy}
                 selected={selected === target.id}
+                suggested={target.id === request.suggested}
                 onSelect={() => setSelected(target.id)}
                 onAssign={() => void assign(target.id)}
               />

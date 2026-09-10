@@ -32,6 +32,14 @@ export interface PoolEntry {
   pattern: string;
   kind: PoolMatch;
   reusable: boolean;
+  /** Glob over the requesting agent's working directory. Empty means anyone. */
+  cwd: string | null;
+  /**
+   * The tmux server a bare-id rule was made on, as `socket:pid:start_time`.
+   * Ids are only unique within one server, so a rule naming one is void
+   * elsewhere. Empty for label globs, which mean the same on any server.
+   */
+  tmuxServer: string | null;
   usedAt: number | null;
   createdAt: number;
 }
@@ -70,10 +78,25 @@ export class Store {
         pattern TEXT NOT NULL,
         kind TEXT NOT NULL,
         reusable INTEGER NOT NULL DEFAULT 0,
+        cwd TEXT,
+        tmux_server TEXT,
         used_at INTEGER,
         created_at INTEGER NOT NULL
       );
     `);
+
+    this.addColumnIfMissing('pool', 'cwd', 'TEXT');
+    this.addColumnIfMissing('pool', 'tmux_server', 'TEXT');
+  }
+
+  /**
+   * A database from an earlier version keeps its rows; the new conditions are
+   * simply absent there, which reads as "applies to anyone", the old meaning.
+   */
+  private addColumnIfMissing(table: string, column: string, type: string): void {
+    const columns = this.db.prepare(`PRAGMA table_info(${table})`).all() as Array<{ name: string }>;
+    if (columns.some(c => c.name === column)) return;
+    this.db.exec(`ALTER TABLE ${table} ADD COLUMN ${column} ${type}`);
   }
 
   close(): void {
@@ -149,25 +172,35 @@ export class Store {
     return Number(result.changes) > 0;
   }
 
-  addPoolEntry(accountId: number, pattern: string, kind: PoolMatch, reusable: boolean): PoolEntry {
+  addPoolEntry(
+    accountId: number,
+    pattern: string,
+    kind: PoolMatch,
+    reusable: boolean,
+    bound: { cwd?: string; tmuxServer?: string } = {}
+  ): PoolEntry {
     const createdAt = Date.now();
+    const cwd = bound.cwd ?? null;
+    const tmuxServer = bound.tmuxServer ?? null;
     this.db.prepare(
-      'INSERT INTO pool (account_id, pattern, kind, reusable, created_at) VALUES (?, ?, ?, ?, ?)'
-    ).run(accountId, pattern, kind, reusable ? 1 : 0, createdAt);
+      'INSERT INTO pool (account_id, pattern, kind, reusable, cwd, tmux_server, created_at) VALUES (?, ?, ?, ?, ?, ?, ?)'
+    ).run(accountId, pattern, kind, reusable ? 1 : 0, cwd, tmuxServer, createdAt);
     const id = Number((this.db.prepare('SELECT last_insert_rowid() AS id').get() as { id: number }).id);
-    return { id, accountId, pattern, kind, reusable, usedAt: null, createdAt };
+    return { id, accountId, pattern, kind, reusable, cwd, tmuxServer, usedAt: null, createdAt };
   }
 
   listPool(accountId: number): PoolEntry[] {
     const rows = this.db.prepare(
-      'SELECT id, account_id, pattern, kind, reusable, used_at, created_at FROM pool WHERE account_id = ? ORDER BY created_at'
-    ).all(accountId) as Array<{ id: number; account_id: number; pattern: string; kind: string; reusable: number; used_at: number | null; created_at: number }>;
+      'SELECT id, account_id, pattern, kind, reusable, cwd, tmux_server, used_at, created_at FROM pool WHERE account_id = ? ORDER BY created_at'
+    ).all(accountId) as Array<{ id: number; account_id: number; pattern: string; kind: string; reusable: number; cwd: string | null; tmux_server: string | null; used_at: number | null; created_at: number }>;
     return rows.map(row => ({
       id: row.id,
       accountId: row.account_id,
       pattern: row.pattern,
       kind: row.kind as PoolMatch,
       reusable: row.reusable === 1,
+      cwd: row.cwd,
+      tmuxServer: row.tmux_server,
       usedAt: row.used_at,
       createdAt: row.created_at,
     }));

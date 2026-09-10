@@ -15,9 +15,27 @@ function globToRegExp(pattern: string): RegExp {
   return new RegExp(`^${escaped.replace(/\*/g, '.*').replace(/\?/g, '.')}$`, 'i');
 }
 
-export function entryMatches(entry: PoolEntry, candidate: WireCandidate, kind: 'pane' | 'window'): boolean {
+/** Who is asking, as far as an entry is allowed to care. */
+export interface Asker {
+  cwd: string;
+  tmuxServer: string;
+}
+
+export function entryMatches(
+  entry: PoolEntry,
+  candidate: WireCandidate,
+  kind: 'pane' | 'window',
+  asker?: Asker
+): boolean {
   if (entry.kind !== kind) return false;
   if (entry.usedAt !== null && !entry.reusable) return false;
+
+  // Bound to a directory: only agents working there collect it.
+  if (entry.cwd && !globToRegExp(entry.cwd).test(asker?.cwd ?? '')) return false;
+
+  // Bound to a tmux server: a bare id means nothing on any other one, so the
+  // rule falls silent and the human is asked again.
+  if (entry.tmuxServer && entry.tmuxServer !== asker?.tmuxServer) return false;
 
   // A bare id is compared exactly; anything else is a glob over the label,
   // which is where session, window, command and title live.
@@ -34,10 +52,11 @@ export interface PoolMatchResult {
 export function findPoolMatch(
   entries: PoolEntry[],
   candidates: WireCandidate[],
-  kind: 'pane' | 'window'
+  kind: 'pane' | 'window',
+  asker?: Asker
 ): PoolMatchResult | null {
   for (const entry of entries) {
-    const candidate = candidates.find(c => entryMatches(entry, c, kind));
+    const candidate = candidates.find(c => entryMatches(entry, c, kind, asker));
     if (candidate) return { entry, candidate };
   }
   return null;

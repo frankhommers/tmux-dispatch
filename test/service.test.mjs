@@ -7,7 +7,7 @@ import { loadConfig } from '../server-dist/config.js';
 import { startService } from '../server-dist/http.js';
 import { localAccount } from '../server-dist/auth.js';
 
-const PROTOCOL_VERSION = '1.3';
+const PROTOCOL_VERSION = '1.4';
 
 async function withService(env, run) {
   const config = loadConfig({ PORT: '0', DATABASE_PATH: ':memory:', SESSION_SECRET: 'test-secret', ...env });
@@ -20,7 +20,12 @@ async function withService(env, run) {
 }
 
 /** A stand-in MCP server: dials in, says hello, and records what it is told. */
-function connectAgent(url, token, { protocolVersion = PROTOCOL_VERSION, instanceId = randomUUID() } = {}) {
+function connectAgent(url, token, {
+  protocolVersion = PROTOCOL_VERSION,
+  instanceId = randomUUID(),
+  cwd = '/tmp',
+  tmuxServer = '/private/tmp/tmux-501/default:1:1',
+} = {}) {
   const socket = new WebSocket(`${url.replace(/^http/, 'ws')}/agent`, {
     headers: token ? { Authorization: `Bearer ${token}` } : {},
   });
@@ -44,7 +49,7 @@ function connectAgent(url, token, { protocolVersion = PROTOCOL_VERSION, instance
   socket.on('open', () => state.send({
     type: 'hello',
     protocolVersion,
-    agent: { instanceId, pid: 1, host: 'test', cwd: '/tmp', tmuxSession: null, scope: 'none', client: 'test' },
+    agent: { instanceId, pid: 1, host: 'test', cwd, tmuxServer, tmuxSession: null, scope: 'none', client: 'test' },
   }));
   return state;
 }
@@ -671,6 +676,132 @@ test('a suggestion travels with the request, without deciding anything', async (
       assert.equal(body.requests.length, 1, 'a suggestion is not an answer; the request still waits');
       assert.equal(body.requests[0].suggested, '%5');
       assert.equal(agent.received.some(m => m.type === 'answer'), false, 'nothing may be assigned on its own');
+    } finally {
+      agent.close();
+    }
+  });
+});
+
+test('a rule bound to a directory only answers agents working there', async () => {
+  await withService({}, async ({ url, config, service }) => {
+    const account = localAccount(service.store);
+    service.store.addPoolEntry(account.id, '%3', 'pane', true, {
+      cwd: '*/Repos/foo*',
+      tmuxServer: 'socket:1:100',
+    });
+
+    const elsewhere = connectAgent(url, config.token, { cwd: '/Users/frank/Repos/bar', tmuxServer: 'socket:1:100' });
+    try {
+      await elsewhere.waitFor('welcome');
+      elsewhere.send({ ...REQUEST, id: 'r-elsewhere' });
+      await new Promise(r => setTimeout(r, 300));
+      assert.equal(elsewhere.received.some(m => m.type === 'answer'), false,
+        'another directory must not collect this rule');
+    } finally {
+      elsewhere.close();
+    }
+
+    const there = connectAgent(url, config.token, { cwd: '/Users/frank/Repos/foo', tmuxServer: 'socket:1:100' });
+    try {
+      await there.waitFor('welcome');
+      there.send({ ...REQUEST, id: 'r-there' });
+      const answer = await there.waitFor('answer');
+      assert.equal(answer.target, '%3');
+    } finally {
+      there.close();
+    }
+  });
+});
+
+test('a rule on a bare id is dead once that tmux server is gone', async () => {
+  await withService({}, async ({ url, config, service }) => {
+    const account = localAccount(service.store);
+    service.store.addPoolEntry(account.id, '%3', 'pane', true, {
+      cwd: '*/Repos/foo*',
+      tmuxServer: 'socket:1:100',
+    });
+
+    // Same directory, but tmux restarted: %3 is not the pane it was.
+    const restarted = connectAgent(url, config.token, { cwd: '/Users/frank/Repos/foo', tmuxServer: 'socket:2:200' });
+    try {
+      await restarted.waitFor('welcome');
+      restarted.send({ ...REQUEST, id: 'r-restarted' });
+      await new Promise(r => setTimeout(r, 300));
+      assert.equal(restarted.received.some(m => m.type === 'answer'), false,
+        'the human should be asked again rather than handed the wrong pane');
+    } finally {
+      restarted.close();
+    }
+  });
+});
+
+test('a rule without a directory keeps answering anyone, as before', async () => {
+  await withService({}, async ({ url, config, service }) => {
+    const account = localAccount(service.store);
+    service.store.addPoolEntry(account.id, '%3', 'pane', true);
+
+    const agent = connectAgent(url, config.token, { cwd: '/anywhere', tmuxServer: 'whatever:9:9' });
+    try {
+      await agent.waitFor('welcome');
+      agent.send(REQUEST);
+      const answer = await agent.waitFor('answer');
+      assert.equal(answer.target, '%3');
+    } finally {
+      agent.close();
+    }
+  });
+});
+
+test('keeping an assignment turns it into a rule bound to that agent', async () => {
+  await withService({}, async ({ url, config }) => {
+    const agent = connectAgent(url, config.token, {
+      cwd: '/Users/frank/Repos/foo',
+      tmuxServer: '/private/tmp/tmux-501/default:16186:1788462695',
+    });
+    try {
+      await agent.waitFor('welcome');
+      agent.send({ type: 'grants', grants: [GRANT] });
+      await new Promise(r => setTimeout(r, 200));
+
+      const body = await inbox(url, config);
+      const response = await fetch(`${url}/api/agents/${body.agents[0].id}/keep`, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json', Authorization: `Bearer ${config.token}` },
+        body: JSON.stringify({ target: '%3' }),
+      });
+      assert.equal(response.status, 200);
+
+      const { pool } = await (await fetch(`${url}/api/pool`, {
+        headers: { Authorization: `Bearer ${config.token}` },
+      })).json();
+      assert.equal(pool.length, 1);
+      assert.equal(pool[0].pattern, '%3');
+      assert.equal(pool[0].reusable, true, 'a standing rule answers every restart, not once');
+      assert.equal(pool[0].cwd, '/Users/frank/Repos/foo');
+      assert.equal(pool[0].tmuxServer, '/private/tmp/tmux-501/default:16186:1788462695');
+    } finally {
+      agent.close();
+    }
+  });
+});
+
+test('an assignment nobody holds cannot be kept', async () => {
+  await withService({}, async ({ url, config }) => {
+    const agent = connectAgent(url, config.token, { cwd: '/Users/frank/Repos/foo' });
+    try {
+      await agent.waitFor('welcome');
+      agent.send({ type: 'grants', grants: [GRANT] });
+      await new Promise(r => setTimeout(r, 200));
+
+      const body = await inbox(url, config);
+      const response = await fetch(`${url}/api/agents/${body.agents[0].id}/keep`, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json', Authorization: `Bearer ${config.token}` },
+        body: JSON.stringify({ target: '%999' }),
+      });
+      assert.equal(response.status, 404);
+      const { error } = await response.json();
+      assert.match(error, /not held/i, 'a rule may only be made from something really handed over');
     } finally {
       agent.close();
     }

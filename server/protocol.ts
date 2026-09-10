@@ -6,7 +6,7 @@
  * independently anyway. PROTOCOL_VERSION is what keeps them honest.
  */
 
-export const PROTOCOL_VERSION = '1.3';
+export const PROTOCOL_VERSION = '1.4';
 
 export function protocolMajor(version: string): string {
   return version.split('.')[0] ?? '';
@@ -23,6 +23,8 @@ export interface AgentIdentity {
    * treated as a fresh machine on every dial-in.
    */
   instanceId?: string;
+  /** The tmux server it is talking to, as `socket:pid:start_time`. */
+  tmuxServer?: string;
   pid: number;
   host: string;
   cwd: string;

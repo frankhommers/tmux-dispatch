@@ -113,12 +113,17 @@ has: a service that is down must not silently take panes away.
 
 ## Assigning without being asked
 
-
 The pool holds entries — a pane id like `%3`, or a glob over the candidate
 label like `*agents:*`. When a request matches, it is answered immediately and
 you see what happened afterwards. Matching runs against the candidates the
 agent sent, so an entry decides *faster*, never *wider*. A non-reusable entry
 is used once.
+
+"Keep" next to a pane a machine holds turns that assignment into a standing
+rule: agents working in the same directory get it back without asking. Such a
+rule is bound to that directory and to the tmux server the id belongs to, so a
+restarted tmux makes it fall silent rather than hand out a pane that now means
+something else.
 
 ## What this service can and cannot do
 

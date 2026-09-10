@@ -74,6 +74,16 @@ export function PoolPanel() {
               <li key={entry.id} className="flex items-center gap-2 rounded-lg px-2 py-1.5 hover:bg-accent/60">
                 <code className="font-mono text-sm">{entry.pattern}</code>
                 <Badge variant="secondary" className="text-[11px]">{entry.kind}</Badge>
+                {entry.cwd && (
+                  <Badge variant="outline" className="max-w-[16rem] truncate text-[11px]" title={entry.cwd}>
+                    {entry.cwd}
+                  </Badge>
+                )}
+                {entry.tmuxServer && (
+                  <Badge variant="outline" className="text-[11px]" title={entry.tmuxServer}>
+                    this tmux
+                  </Badge>
+                )}
                 {entry.reusable && <Badge variant="outline" className="text-[11px]">reusable</Badge>}
                 {entry.usedAt && <Badge variant="outline" className="text-[11px]">used</Badge>}
                 <span className="flex-1" />

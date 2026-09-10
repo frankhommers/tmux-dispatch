@@ -106,7 +106,11 @@ export async function startService(config: Config): Promise<Service> {
   // Pre-assigned entries answer before a human is bothered. The match runs
   // against the candidates the agent sent, so it can never widen that list.
   agents.on('request', (accountId: number, request) => {
-    const match = findPoolMatch(store.listPool(accountId), request.candidates, request.kind);
+    const identity = agents.agentOf(request.id)?.identity;
+    const match = findPoolMatch(store.listPool(accountId), request.candidates, request.kind, {
+      cwd: identity?.cwd ?? '',
+      tmuxServer: identity?.tmuxServer ?? '',
+    });
     if (!match) {
       broadcast(accountId, 'request', { id: request.id, reason: request.reason });
       return;
@@ -285,6 +289,26 @@ export async function startService(config: Config): Promise<Service> {
         return;
       }
       sendJson(res, agents.answer(accountId, id, { target }) ? 200 : 404, { ok: true });
+      return;
+    }
+
+    const keepMatch = path.match(/^\/api\/agents\/([^/]+)\/keep$/);
+    if (keepMatch && req.method === 'POST') {
+      const body = await readBody(req);
+      const target = typeof body.target === 'string' ? body.target : '';
+      const held = agents.heldBy(accountId, keepMatch[1], target);
+      if (!held) {
+        sendJson(res, 404, { error: `${target || 'that target'} is not held by this machine` });
+        return;
+      }
+      // Bound to where the agent works and to the tmux server the id belongs
+      // to, so the rule cannot outlive the meaning of what it names.
+      sendJson(res, 200, {
+        entry: store.addPoolEntry(accountId, held.grant.target, held.grant.kind, true, {
+          cwd: held.identity.cwd,
+          tmuxServer: held.identity.tmuxServer,
+        }),
+      });
       return;
     }
 

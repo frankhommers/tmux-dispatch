@@ -1,10 +1,10 @@
 import { useState } from 'react';
-import { Undo2, TerminalSquare } from 'lucide-react';
+import { Pin, Undo2, TerminalSquare } from 'lucide-react';
 import { toast } from 'sonner';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader } from '@/components/ui/card';
-import { parseLabel, revokeGrant, type ConnectedAgent } from '@/lib/api';
+import { keepGrant, parseLabel, revokeGrant, type ConnectedAgent } from '@/lib/api';
 import { cn } from '@/lib/utils';
 
 /** "3m ago", close enough for a list that refreshes itself. */
@@ -36,6 +36,21 @@ export function AgentsPanel({ agents, onChanged }: Props) {
       await revokeGrant(agent.id, target);
       toast.success(`Revoked ${target}`, {
         description: agent.connected ? undefined : 'Lands at its next action.',
+      });
+      onChanged();
+    } catch (cause) {
+      toast.error((cause as Error).message);
+    } finally {
+      setBusy(null);
+    }
+  };
+
+  const keep = async (agent: ConnectedAgent, target: string) => {
+    setBusy(`${agent.id}:${target}`);
+    try {
+      await keepGrant(agent.id, target);
+      toast.success(`${target} stays with ${agent.identity.cwd.split('/').pop()}`, {
+        description: 'Agents working there get it back without asking.',
       });
       onChanged();
     } catch (cause) {
@@ -100,6 +115,16 @@ export function AgentsPanel({ agents, onChanged }: Props) {
                       <span className="text-xs text-muted-foreground/80">
                         {grant.lastActivity ? `used ${ago(grant.lastActivity)}` : `since ${ago(grant.since)}`}
                       </span>
+                      <Button
+                        size="sm"
+                        variant="ghost"
+                        aria-label={`Keep ${grant.target} for this directory`}
+                        title="Give it back to agents working here, without asking"
+                        onClick={() => void keep(agent, grant.target)}
+                      >
+                        <Pin className="size-3.5" />
+                        Keep
+                      </Button>
                       <Button
                         size="sm"
                         variant="ghost"

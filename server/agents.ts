@@ -298,8 +298,18 @@ export class AgentRegistry extends EventEmitter {
     }
   }
 
-  markAutoAssigned(
-id: string, target: string, entryId: number): void {
+  /**
+   * What an agent holds and who it is, so a standing rule can be cut from a
+   * grant that already works rather than typed out by hand.
+   */
+  heldBy(accountId: number, agentId: string, target: string): { grant: WireGrant; identity: AgentIdentity } | null {
+    const agent = this.agents.get(agentId);
+    if (!agent || agent.accountId !== accountId) return null;
+    const grant = agent.grants.find(g => g.target === target);
+    return grant ? { grant, identity: agent.identity } : null;
+  }
+
+  markAutoAssigned(id: string, target: string, entryId: number): void {
     const request = this.requests.get(id);
     if (request) request.autoAssigned = { target, entryId };
   }

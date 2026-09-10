@@ -102,6 +102,10 @@ export interface PoolEntry {
   pattern: string;
   kind: 'pane' | 'window';
   reusable: boolean;
+  /** Only agents working here collect it. Null means anyone. */
+  cwd: string | null;
+  /** The tmux server a bare id belongs to; the rule is void on any other. */
+  tmuxServer: string | null;
   usedAt: number | null;
   createdAt: number;
 }
@@ -126,6 +130,12 @@ export const deny = (id: string, reason: string) =>
   api<{ ok: true }>(`/api/requests/${id}/deny`, { method: 'POST', body: JSON.stringify({ reason }) });
 export const refreshTargets = (id: string) =>
   api<{ ok: true }>(`/api/requests/${id}/refresh`, { method: 'POST' });
+
+export const keepGrant = (agentId: string, target: string) =>
+  api<{ entry: PoolEntry }>(`/api/agents/${encodeURIComponent(agentId)}/keep`, {
+    method: 'POST',
+    body: JSON.stringify({ target }),
+  });
 
 export const revokeGrant = (agentId: string, target: string) =>
   api<{ ok: true }>(`/api/agents/${encodeURIComponent(agentId)}/revoke`, {

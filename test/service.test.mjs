@@ -864,3 +864,143 @@ test('a request shows which of its candidates are already handed out here', asyn
     }
   });
 });
+
+const bearer = config => ({ Authorization: `Bearer ${config.token}` });
+const settle = () => new Promise(r => setTimeout(r, 250));
+
+test('a restarted tmux server takes the machines of the old one with it', async () => {
+  await withService({}, async ({ url, config }) => {
+    const old = connectAgent(url, config.token, { tmuxServer: '/private/tmp/tmux-501/default:1:100' });
+    await old.waitFor('welcome');
+    old.send({ type: 'grants', grants: [GRANT] });
+    await settle();
+    old.close();
+    await settle();
+    assert.equal((await inbox(url, config)).agents.length, 1, 'still shown while nothing proves it gone');
+
+    const fresh = connectAgent(url, config.token, { tmuxServer: '/private/tmp/tmux-501/default:2:200' });
+    try {
+      await fresh.waitFor('welcome');
+      await settle();
+      const ids = (await inbox(url, config)).agents.map(a => a.identity.tmuxServer);
+      assert.deepEqual(ids, ['/private/tmp/tmux-501/default:2:200'],
+        'same socket, later start: the old ids mean nothing any more');
+    } finally {
+      fresh.close();
+    }
+  });
+});
+
+test('a tmux server on another socket leaves other machines alone', async () => {
+  await withService({}, async ({ url, config }) => {
+    const old = connectAgent(url, config.token, { tmuxServer: '/private/tmp/tmux-501/default:1:100' });
+    await old.waitFor('welcome');
+    old.send({ type: 'grants', grants: [GRANT] });
+    await settle();
+    old.close();
+    await settle();
+
+    const other = connectAgent(url, config.token, { tmuxServer: '/private/tmp/tmux-501/work:2:200' });
+    try {
+      await other.waitFor('welcome');
+      await settle();
+      assert.equal((await inbox(url, config)).agents.length, 2, 'two servers side by side is normal');
+    } finally {
+      other.close();
+    }
+  });
+});
+
+test('a pane now held by a newer agent is no longer shown with a vanished one', async () => {
+  await withService({}, async ({ url, config }) => {
+    const server = '/private/tmp/tmux-501/default:1:100';
+    const old = connectAgent(url, config.token, { cwd: '/Users/frank/Repos/foo', tmuxServer: server });
+    await old.waitFor('welcome');
+    old.send({ type: 'grants', grants: [GRANT] });
+    await settle();
+    old.close();
+    await settle();
+
+    const restarted = connectAgent(url, config.token, { cwd: '/Users/frank/Repos/foo', tmuxServer: server });
+    try {
+      await restarted.waitFor('welcome');
+      restarted.send({ type: 'grants', grants: [GRANT] });
+      await settle();
+      const agents = (await inbox(url, config)).agents;
+      assert.equal(agents.length, 1, 'the same pane twice is the wart this removes');
+      assert.equal(agents[0].connected, true);
+    } finally {
+      restarted.close();
+    }
+  });
+});
+
+test('two connected agents claiming one pane are both shown', async () => {
+  await withService({}, async ({ url, config }) => {
+    const server = '/private/tmp/tmux-501/default:1:100';
+    const a = connectAgent(url, config.token, { tmuxServer: server });
+    const b = connectAgent(url, config.token, { tmuxServer: server });
+    try {
+      await a.waitFor('welcome');
+      await b.waitFor('welcome');
+      a.send({ type: 'grants', grants: [GRANT] });
+      await settle();
+      b.send({ type: 'grants', grants: [GRANT] });
+      await settle();
+      const holders = (await inbox(url, config)).agents.filter(x => x.grants.length > 0);
+      assert.equal(holders.length, 2, 'a live conflict is for a human to see, not to hide');
+    } finally {
+      a.close();
+      b.close();
+    }
+  });
+});
+
+test('a vanished machine can be forgotten, and what was revoked stays revoked', async () => {
+  await withService({}, async ({ url, config }) => {
+    const instanceId = randomUUID();
+    const gone = connectAgent(url, config.token, { instanceId });
+    await gone.waitFor('welcome');
+    gone.send({ type: 'grants', grants: [GRANT, { ...GRANT, target: '%5' }] });
+    await settle();
+    await fetch(`${url}/api/agents/${instanceId}/revoke`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json', ...bearer(config) },
+      body: JSON.stringify({ target: '%3' }),
+    });
+    gone.close();
+    await settle();
+
+    const forget = await fetch(`${url}/api/agents/${instanceId}`, { method: 'DELETE', headers: bearer(config) });
+    assert.equal(forget.status, 200);
+    assert.deepEqual((await inbox(url, config)).agents, []);
+
+    // It was only asleep after all.
+    const back = connectAgent(url, config.token, { instanceId });
+    try {
+      await back.waitFor('welcome');
+      back.send({ type: 'check', id: 'c-back', target: '%3' });
+      const verdict = await back.waitFor('verdict', 4000, m => m.id === 'c-back');
+      assert.equal(verdict.allowed, false, 'forgetting a machine must not undo a revocation');
+    } finally {
+      back.close();
+    }
+  });
+});
+
+test('a machine that is still connected cannot be forgotten', async () => {
+  await withService({}, async ({ url, config }) => {
+    const instanceId = randomUUID();
+    const live = connectAgent(url, config.token, { instanceId });
+    try {
+      await live.waitFor('welcome');
+      live.send({ type: 'grants', grants: [GRANT] });
+      await settle();
+      const forget = await fetch(`${url}/api/agents/${instanceId}`, { method: 'DELETE', headers: bearer(config) });
+      assert.equal(forget.status, 409, 'it is plainly there; forgetting it would only hide it');
+      assert.equal((await inbox(url, config)).agents.length, 1);
+    } finally {
+      live.close();
+    }
+  });
+});

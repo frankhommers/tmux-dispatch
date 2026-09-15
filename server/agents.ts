@@ -59,6 +59,16 @@ export interface ConnectedAgent {
   activity: Map<string, number>;
 }
 
+/** `socket:pid:start_time`, read from the right since a path may hold a colon. */
+function parseTmuxServer(fingerprint: string | undefined): { socket: string; startedAt: number } | null {
+  if (!fingerprint) return null;
+  const parts = fingerprint.split(':');
+  if (parts.length < 3) return null;
+  const startedAt = Number(parts.at(-1));
+  if (!Number.isFinite(startedAt)) return null;
+  return { socket: parts.slice(0, -2).join(':'), startedAt };
+}
+
 let nextAnonymousId = 1;
 
 export class AgentRegistry extends EventEmitter {
@@ -101,6 +111,7 @@ export class AgentRegistry extends EventEmitter {
           revoked: known?.revoked ?? new Map(),
           activity: known?.activity ?? new Map(),
         });
+        this.forgetOldTmuxServers(this.agents.get(id)!);
         this.send(socket, { type: 'welcome', protocolVersion: PROTOCOL_VERSION, account: accountName });
         this.emit('change', accountId);
         return;
@@ -182,6 +193,7 @@ export class AgentRegistry extends EventEmitter {
         // An agent that has not caught up yet still reports what it was told
         // to give back. Showing that would suggest an assignment that is over.
         agent.grants = message.grants.filter(grant => !agent.revoked.has(grant.target));
+        this.releaseDuplicateClaims(agent);
         this.emit('change', accountId);
         return;
       }
@@ -296,6 +308,57 @@ export class AgentRegistry extends EventEmitter {
       socket?.close();
       this.emit('change', agent.accountId);
     }
+  }
+
+  /**
+   * A tmux server that restarted on the same socket takes its ids with it, so
+   * the machines that talked to the old one hold nothing a human would
+   * recognise. Only vanished ones go — a connected agent finds out for itself
+   * at its next action — and their revocations go with them, since the panes
+   * they named no longer exist.
+   */
+  private forgetOldTmuxServers(newcomer: ConnectedAgent): void {
+    const current = parseTmuxServer(newcomer.identity.tmuxServer);
+    if (!current) return;
+    for (const [id, agent] of this.agents) {
+      if (id === newcomer.id || agent.connected || agent.accountId !== newcomer.accountId) continue;
+      if (agent.identity.host !== newcomer.identity.host) continue;
+      const theirs = parseTmuxServer(agent.identity.tmuxServer);
+      if (theirs && theirs.socket === current.socket && theirs.startedAt < current.startedAt) {
+        this.agents.delete(id);
+      }
+    }
+  }
+
+  /**
+   * A pane an agent reports holding is no longer shown with a vanished agent on
+   * the same tmux server: the newest report is the one that proved it. A
+   * connected agent keeps its claim, since two live holders is a conflict for
+   * a human to see. Revocations stay, in case the vanished one was only asleep.
+   */
+  private releaseDuplicateClaims(reporter: ConnectedAgent): void {
+    const server = reporter.identity.tmuxServer;
+    if (!server) return;
+    const claimed = new Set(reporter.grants.map(g => g.target));
+    for (const agent of this.agents.values()) {
+      if (agent === reporter || agent.connected || agent.accountId !== reporter.accountId) continue;
+      if (agent.identity.tmuxServer !== server) continue;
+      agent.grants = agent.grants.filter(g => !claimed.has(g.target));
+    }
+  }
+
+  /**
+   * Take a vanished machine out of view. What a human revoked from it is kept:
+   * if it was only asleep, it must not come back to a pane that was taken away.
+   */
+  forget(accountId: number, agentId: string): 'forgotten' | 'connected' | 'unknown' {
+    const agent = this.agents.get(agentId);
+    if (!agent || agent.accountId !== accountId) return 'unknown';
+    if (agent.connected) return 'connected';
+    agent.grants = [];
+    if (agent.revoked.size === 0) this.agents.delete(agentId);
+    this.emit('change', accountId);
+    return 'forgotten';
   }
 
   /**

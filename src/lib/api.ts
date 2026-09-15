@@ -135,6 +135,9 @@ export const refreshTargets = (id: string) =>
 export const dismissRequest = (id: string) =>
   api<{ ok: true }>(`/api/requests/${id}`, { method: 'DELETE' });
 
+export const forgetAgent = (agentId: string) =>
+  api<{ ok: true }>(`/api/agents/${encodeURIComponent(agentId)}`, { method: 'DELETE' });
+
 export const keepGrant = (agentId: string, target: string) =>
   api<{ entry: PoolEntry }>(`/api/agents/${encodeURIComponent(agentId)}/keep`, {
     method: 'POST',

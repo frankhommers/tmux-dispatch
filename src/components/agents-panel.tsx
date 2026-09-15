@@ -1,10 +1,10 @@
 import { useState } from 'react';
-import { Pin, Undo2, TerminalSquare } from 'lucide-react';
+import { Pin, Undo2, TerminalSquare, X } from 'lucide-react';
 import { toast } from 'sonner';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader } from '@/components/ui/card';
-import { keepGrant, parseLabel, revokeGrant, type ConnectedAgent } from '@/lib/api';
+import { forgetAgent, keepGrant, parseLabel, revokeGrant, type ConnectedAgent } from '@/lib/api';
 import { cn } from '@/lib/utils';
 
 /** "3m ago", close enough for a list that refreshes itself. */
@@ -42,6 +42,15 @@ export function AgentsPanel({ agents, onChanged }: Props) {
       toast.error((cause as Error).message);
     } finally {
       setBusy(null);
+    }
+  };
+
+  const forget = async (agent: ConnectedAgent) => {
+    try {
+      await forgetAgent(agent.id);
+      onChanged();
+    } catch (cause) {
+      toast.error((cause as Error).message);
     }
   };
 
@@ -85,6 +94,17 @@ export function AgentsPanel({ agents, onChanged }: Props) {
                 <span className={cn('size-2 rounded-full', agent.connected ? 'bg-live' : 'bg-muted-foreground/50')} />
                 {agent.connected ? 'connected' : `seen ${ago(agent.lastSeen)}`}
               </span>
+              {!agent.connected && (
+                <Button
+                  size="sm"
+                  variant="ghost"
+                  aria-label={`Forget ${agent.identity.host} in ${agent.identity.cwd}`}
+                  title="Forget this machine. What you revoked stays revoked."
+                  onClick={() => void forget(agent)}
+                >
+                  <X className="size-3.5" />
+                </Button>
+              )}
             </div>
 
             {agent.grants.length === 0 ? (

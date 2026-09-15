@@ -299,6 +299,17 @@ export async function startService(config: Config): Promise<Service> {
       return;
     }
 
+    const agentMatch = path.match(/^\/api\/agents\/([^/]+)$/);
+    if (agentMatch && req.method === 'DELETE') {
+      const outcome = agents.forget(accountId, agentMatch[1]);
+      if (outcome === 'connected') {
+        sendJson(res, 409, { error: 'that machine is still connected' });
+        return;
+      }
+      sendJson(res, outcome === 'forgotten' ? 200 : 404, { ok: true });
+      return;
+    }
+
     const keepMatch = path.match(/^\/api\/agents\/([^/]+)\/keep$/);
     if (keepMatch && req.method === 'POST') {
       const body = await readBody(req);

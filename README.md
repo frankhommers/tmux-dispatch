@@ -111,6 +111,12 @@ one back lands at its next step — even if it was not connected at the time.
 If dispatch cannot be reached, the agent keeps working on the grant it already
 has: a service that is down must not silently take panes away.
 
+Machines that are gone leave the list by themselves when that can be proven: a
+tmux server restarted on the same socket takes the machines of the old one with
+it, and a pane a newer agent reports holding is no longer shown with a vanished
+one. Anything else can be forgotten with ×; what you revoked from it stays
+revoked, in case it was only asleep.
+
 A candidate another agent already holds on the same tmux server is marked as
 such, so you do not hand the same pane out twice. The bin next to Deny throws a
 card away without answering it: for requests the agent has long forgotten, where

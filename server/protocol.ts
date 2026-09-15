@@ -6,7 +6,7 @@
  * independently anyway. PROTOCOL_VERSION is what keeps them honest.
  */
 
-export const PROTOCOL_VERSION = '1.4';
+export const PROTOCOL_VERSION = '1.5';
 
 export function protocolMajor(version: string): string {
   return version.split('.')[0] ?? '';
@@ -25,6 +25,8 @@ export interface AgentIdentity {
   instanceId?: string;
   /** The tmux server it is talking to, as `socket:pid:start_time`. */
   tmuxServer?: string;
+  /** The name the MCP client gave in its `initialize` handshake, verbatim. */
+  mcpClient?: string;
   pid: number;
   host: string;
   cwd: string;

@@ -48,6 +48,10 @@ export interface SessionInfo {
 
 export interface AgentIdentity {
   instanceId?: string;
+  /** The tmux server it talks to, as `socket:pid:start_time`. */
+  tmuxServer?: string;
+  /** Which MCP client started it, as that client names itself. */
+  mcpClient?: string;
   pid: number;
   host: string;
   cwd: string;

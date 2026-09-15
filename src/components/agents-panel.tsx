@@ -1,7 +1,6 @@
 import { useState } from 'react';
-import { Pin, Undo2, TerminalSquare, X } from 'lucide-react';
+import { Pin, TerminalSquare, Undo2, X } from 'lucide-react';
 import { toast } from 'sonner';
-import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader } from '@/components/ui/card';
 import { forgetAgent, keepGrant, parseLabel, revokeGrant, type ConnectedAgent } from '@/lib/api';
@@ -15,15 +14,21 @@ function ago(at: number): string {
   return `${Math.round(seconds / 3600)}h ago`;
 }
 
+/** A project as you would name it: the last segment of its path. */
+function projectName(cwd: string): string {
+  return cwd.replace(/\/+$/, '').split('/').pop() || cwd;
+}
+
 interface Props {
   agents: ConnectedAgent[];
   onChanged: () => void;
 }
 
 /**
- * Which machines hold what. An agent is listed while it is connected or while
- * it still holds something, so a pane you handed over does not disappear from
- * view just because the agent went quiet.
+ * What is handed out, grouped the way you think about it: by project, then by
+ * the agent process holding it. A process is named by the client that started
+ * it and the pane it runs in, since a pid tells a human nothing. The host only
+ * appears when there is more than one.
  */
 export function AgentsPanel({ agents, onChanged }: Props) {
   const [busy, setBusy] = useState<string | null>(null);
@@ -58,7 +63,7 @@ export function AgentsPanel({ agents, onChanged }: Props) {
     setBusy(`${agent.id}:${target}`);
     try {
       await keepGrant(agent.id, target);
-      toast.success(`${target} stays with ${agent.identity.cwd.split('/').pop()}`, {
+      toast.success(`${target} stays with ${projectName(agent.identity.cwd)}`, {
         description: 'Agents working there get it back without asking.',
       });
       onChanged();
@@ -69,97 +74,127 @@ export function AgentsPanel({ agents, onChanged }: Props) {
     }
   };
 
+  const manyHosts = new Set(agents.map(agent => agent.identity.host)).size > 1;
+  const held = agents.reduce((total, agent) => total + agent.grants.length, 0);
+
+  const byProject = new Map<string, ConnectedAgent[]>();
+  for (const agent of agents) {
+    byProject.set(agent.identity.cwd, [...(byProject.get(agent.identity.cwd) ?? []), agent]);
+  }
+  // Living processes first, then the most recently heard from.
+  const projects = [...byProject.entries()]
+    .map(([cwd, processes]) => ({
+      cwd,
+      processes: [...processes].sort(
+        (a, b) => Number(b.connected) - Number(a.connected) || b.lastSeen - a.lastSeen
+      ),
+    }))
+    .sort((a, b) => projectName(a.cwd).localeCompare(projectName(b.cwd)));
+
   return (
     <Card className="border-border/60">
       <CardHeader className="gap-1">
         <div className="flex items-center gap-2">
           <TerminalSquare className="size-4 text-muted-foreground" />
-          <h2 className="text-sm font-semibold">Machines</h2>
+          <h2 className="text-sm font-semibold">Handed out</h2>
+          <span className="flex-1" />
+          <span className="text-xs text-muted-foreground">
+            {held} pane{held === 1 ? '' : 's'}
+          </span>
         </div>
       </CardHeader>
-      <CardContent className="flex flex-col gap-4">
-        {agents.map(agent => (
-          <div key={agent.id} className="flex flex-col gap-1.5">
-            <div className="flex flex-wrap items-center gap-2 text-sm">
-              <span className="font-mono font-medium">{agent.identity.host}</span>
-              <span className="min-w-0 truncate text-muted-foreground">{agent.identity.cwd}</span>
-              <Badge variant="outline" className="text-[11px]">scope {agent.identity.scope}</Badge>
-              <span className="flex-1" />
-              <span
-                className={cn(
-                  'flex items-center gap-1.5 text-xs',
-                  agent.connected ? 'text-muted-foreground' : 'text-muted-foreground/70'
-                )}
-              >
-                <span className={cn('size-2 rounded-full', agent.connected ? 'bg-live' : 'bg-muted-foreground/50')} />
-                {agent.connected ? 'connected' : `seen ${ago(agent.lastSeen)}`}
-              </span>
-              {!agent.connected && (
-                <Button
-                  size="sm"
-                  variant="ghost"
-                  aria-label={`Forget ${agent.identity.host} in ${agent.identity.cwd}`}
-                  title="Forget this machine. What you revoked stays revoked."
-                  onClick={() => void forget(agent)}
-                >
-                  <X className="size-3.5" />
-                </Button>
-              )}
-            </div>
+      <CardContent className="flex flex-col gap-5">
+        {projects.map(({ cwd, processes }) => (
+          <section key={cwd} className="flex flex-col gap-2">
+            <h3 className="text-sm font-semibold" title={cwd}>{projectName(cwd)}</h3>
 
-            {agent.grants.length === 0 ? (
-              <p className="text-sm text-muted-foreground">Nothing held.</p>
-            ) : (
-              <ul className="space-y-1">
-                {agent.grants.map(grant => {
-                  const { location, command } = parseLabel(grant.label);
-                  const key = `${agent.id}:${grant.target}`;
-                  return (
-                    <li
-                      key={grant.target}
-                      className={cn(
-                        'flex items-center gap-2 rounded-lg px-2 py-1.5 hover:bg-accent/60',
-                        busy === key && 'pointer-events-none opacity-50'
-                      )}
+            {processes.map(agent => (
+              <div key={agent.id} className="flex flex-col gap-1 pl-3">
+                <div className="flex items-center gap-2 text-xs text-muted-foreground">
+                  <span
+                    className={cn(
+                      'size-2 shrink-0 rounded-full',
+                      agent.connected ? 'bg-live' : 'bg-muted-foreground/50'
+                    )}
+                  />
+                  <span className="min-w-0 truncate">
+                    <span className="font-medium text-foreground">{agent.identity.mcpClient ?? 'agent'}</span>
+                    {agent.identity.tmuxSession && ` · in ${agent.identity.tmuxSession}`}
+                    {agent.identity.scope !== 'none' && ` · scope ${agent.identity.scope}`}
+                    {manyHosts && ` · ${agent.identity.host}`}
+                    {' · '}
+                    {agent.connected ? 'connected' : `seen ${ago(agent.lastSeen)}`}
+                  </span>
+                  <span className="flex-1" />
+                  {!agent.connected && (
+                    <Button
+                      size="sm"
+                      variant="ghost"
+                      className="h-6 px-1.5"
+                      aria-label={`Forget ${agent.identity.mcpClient ?? 'agent'} in ${cwd}`}
+                      title="Forget this process. What you revoked stays revoked."
+                      onClick={() => void forget(agent)}
                     >
-                      <span className="font-mono text-sm font-medium tabular-nums">{grant.target}</span>
-                      {command && (
-                        <span className="rounded-md bg-muted px-1.5 py-0.5 font-mono text-xs text-muted-foreground">
-                          {command}
-                        </span>
-                      )}
-                      <span className="min-w-0 flex-1 truncate text-sm text-muted-foreground">
-                        {location}
-                        {grant.reason && <span className="ml-2 opacity-70">{grant.reason}</span>}
-                      </span>
-                      <span className="text-xs text-muted-foreground/80">
-                        {grant.lastActivity ? `used ${ago(grant.lastActivity)}` : `since ${ago(grant.since)}`}
-                      </span>
-                      <Button
-                        size="sm"
-                        variant="ghost"
-                        aria-label={`Keep ${grant.target} for this directory`}
-                        title="Give it back to agents working here, without asking"
-                        onClick={() => void keep(agent, grant.target)}
-                      >
-                        <Pin className="size-3.5" />
-                        Keep
-                      </Button>
-                      <Button
-                        size="sm"
-                        variant="ghost"
-                        aria-label={`Revoke ${grant.target}`}
-                        onClick={() => void revoke(agent, grant.target)}
-                      >
-                        <Undo2 className="size-3.5" />
-                        Revoke
-                      </Button>
-                    </li>
-                  );
-                })}
-              </ul>
-            )}
-          </div>
+                      <X className="size-3.5" />
+                    </Button>
+                  )}
+                </div>
+
+                {agent.grants.length === 0 ? (
+                  <p className="pl-4 text-xs text-muted-foreground">Nothing held.</p>
+                ) : (
+                  <ul className="space-y-0.5">
+                    {agent.grants.map(grant => {
+                      const { location, command } = parseLabel(grant.label);
+                      const key = `${agent.id}:${grant.target}`;
+                      return (
+                        <li
+                          key={grant.target}
+                          className={cn(
+                            'flex items-center gap-2 rounded-lg py-1 pr-1 pl-4 hover:bg-accent/60',
+                            busy === key && 'pointer-events-none opacity-50'
+                          )}
+                        >
+                          <span className="font-mono text-sm font-medium tabular-nums">{grant.target}</span>
+                          {command && (
+                            <span className="rounded-md bg-muted px-1.5 py-0.5 font-mono text-xs text-muted-foreground">
+                              {command}
+                            </span>
+                          )}
+                          <span className="min-w-0 flex-1 truncate text-sm text-muted-foreground">
+                            {location}
+                            {grant.reason && <span className="ml-2 opacity-70">{grant.reason}</span>}
+                          </span>
+                          <span className="shrink-0 text-xs text-muted-foreground/80">
+                            {grant.lastActivity ? `used ${ago(grant.lastActivity)}` : `since ${ago(grant.since)}`}
+                          </span>
+                          <Button
+                            size="sm"
+                            variant="ghost"
+                            aria-label={`Keep ${grant.target} for this directory`}
+                            title="Give it back to agents working here, without asking"
+                            onClick={() => void keep(agent, grant.target)}
+                          >
+                            <Pin className="size-3.5" />
+                            Keep
+                          </Button>
+                          <Button
+                            size="sm"
+                            variant="ghost"
+                            aria-label={`Revoke ${grant.target}`}
+                            onClick={() => void revoke(agent, grant.target)}
+                          >
+                            <Undo2 className="size-3.5" />
+                            Revoke
+                          </Button>
+                        </li>
+                      );
+                    })}
+                  </ul>
+                )}
+              </div>
+            ))}
+          </section>
         ))}
       </CardContent>
     </Card>

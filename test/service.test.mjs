@@ -7,7 +7,7 @@ import { loadConfig } from '../server-dist/config.js';
 import { startService } from '../server-dist/http.js';
 import { localAccount } from '../server-dist/auth.js';
 
-const PROTOCOL_VERSION = '1.4';
+const PROTOCOL_VERSION = '1.5';
 
 async function withService(env, run) {
   const config = loadConfig({ PORT: '0', DATABASE_PATH: ':memory:', SESSION_SECRET: 'test-secret', ...env });

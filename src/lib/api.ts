@@ -71,6 +71,8 @@ export interface PaneRequest {
   candidates: Target[];
   /** What the agent would like, if it said so. A hint; the human still chooses. */
   suggested: string | null;
+  /** Candidates already handed out on this same tmux server, by directory. */
+  heldElsewhere: Record<string, string>;
   autoAssigned: { target: string; entryId: number } | null;
   lastError: string | null;
   agent: AgentIdentity | null;
@@ -130,6 +132,8 @@ export const deny = (id: string, reason: string) =>
   api<{ ok: true }>(`/api/requests/${id}/deny`, { method: 'POST', body: JSON.stringify({ reason }) });
 export const refreshTargets = (id: string) =>
   api<{ ok: true }>(`/api/requests/${id}/refresh`, { method: 'POST' });
+export const dismissRequest = (id: string) =>
+  api<{ ok: true }>(`/api/requests/${id}`, { method: 'DELETE' });
 
 export const keepGrant = (agentId: string, target: string) =>
   api<{ entry: PoolEntry }>(`/api/agents/${encodeURIComponent(agentId)}/keep`, {

@@ -1,12 +1,12 @@
 import { useEffect, useState } from 'react';
-import { AlertTriangle, Cpu, RefreshCw } from 'lucide-react';
+import { AlertTriangle, Cpu, RefreshCw, Trash2 } from 'lucide-react';
 import { toast } from 'sonner';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardFooter, CardHeader } from '@/components/ui/card';
 import { DenyDialog } from '@/components/deny-dialog';
 import { TargetRow } from '@/components/target-row';
-import { grant, refreshTargets, type PaneRequest } from '@/lib/api';
+import { dismissRequest, grant, refreshTargets, type PaneRequest } from '@/lib/api';
 
 function ageLabel(seconds: number): string {
   if (seconds < 60) return `${seconds}s ago`;
@@ -116,6 +116,7 @@ export function RequestCard({ request, onChanged }: { request: PaneRequest; onCh
                 busy={busy}
                 selected={selected === target.id}
                 suggested={target.id === request.suggested}
+                heldBy={request.heldElsewhere[target.id]}
                 onSelect={() => setSelected(target.id)}
                 onAssign={() => void assign(target.id)}
               />
@@ -156,6 +157,22 @@ export function RequestCard({ request, onChanged }: { request: PaneRequest; onCh
             Refresh
           </Button>
           <DenyDialog reason={request.reason} requestId={request.id} onDenied={onChanged} />
+          <Button
+            variant="ghost"
+            size="sm"
+            aria-label="Throw this request away"
+            title="Throw the card away without answering. For requests the agent has forgotten."
+            onClick={async () => {
+              try {
+                await dismissRequest(request.id);
+                onChanged();
+              } catch (cause) {
+                toast.error((cause as Error).message);
+              }
+            }}
+          >
+            <Trash2 className="size-3.5" />
+          </Button>
         </div>
       </CardFooter>
     </Card>

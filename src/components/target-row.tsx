@@ -9,11 +9,13 @@ interface Props {
   selected: boolean;
   /** The agent asked for this one by name. */
   suggested?: boolean;
+  /** Already handed to an agent working here, on this same tmux server. */
+  heldBy?: string;
   onSelect: () => void;
   onAssign: () => void;
 }
 
-export function TargetRow({ target, busy, selected, suggested, onSelect, onAssign }: Props) {
+export function TargetRow({ target, busy, selected, suggested, heldBy, onSelect, onAssign }: Props) {
   const { id, location, command, title } = parseLabel(target.label);
 
   return (
@@ -46,6 +48,15 @@ export function TargetRow({ target, busy, selected, suggested, onSelect, onAssig
 
         {suggested && (
           <span className="rounded-md bg-live/15 px-1.5 py-0.5 text-xs text-live">asked for</span>
+        )}
+
+        {heldBy && (
+          <span
+            className="max-w-[14rem] truncate rounded-md bg-destructive/15 px-1.5 py-0.5 text-xs text-destructive"
+            title={`Already assigned to an agent in ${heldBy}`}
+          >
+            held by {heldBy.split('/').pop()}
+          </span>
         )}
 
         {command && (

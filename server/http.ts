@@ -254,6 +254,7 @@ export async function startService(config: Config): Promise<Service> {
           autoAssigned: request.autoAssigned ?? null,
           lastError: request.lastError ?? null,
           agent: agents.agentOf(request.id)?.identity ?? null,
+          heldElsewhere: agents.heldElsewhere(accountId, request.id),
         })),
         agents: agents.listAgents(accountId).map(agent => ({
           id: agent.id,
@@ -267,6 +268,12 @@ export async function startService(config: Config): Promise<Service> {
           })),
         })),
       });
+      return;
+    }
+
+    const dismissMatch = path.match(/^\/api\/requests\/([^/]+)$/);
+    if (dismissMatch && req.method === 'DELETE') {
+      sendJson(res, agents.dismiss(accountId, dismissMatch[1]) ? 200 : 404, { ok: true });
       return;
     }
 

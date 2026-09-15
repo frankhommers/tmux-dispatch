@@ -807,3 +807,60 @@ test('an assignment nobody holds cannot be kept', async () => {
     }
   });
 });
+
+test('a stuck request can be thrown away without involving the agent', async () => {
+  await withService({}, async ({ url, config }) => {
+    const agent = connectAgent(url, config.token);
+    try {
+      await agent.waitFor('welcome');
+      agent.send(REQUEST);
+      await new Promise(r => setTimeout(r, 200));
+      assert.equal((await inbox(url, config)).requests.length, 1);
+
+      const response = await fetch(`${url}/api/requests/${REQUEST.id}`, {
+        method: 'DELETE',
+        headers: { Authorization: `Bearer ${config.token}` },
+      });
+      assert.equal(response.status, 200);
+      assert.equal((await inbox(url, config)).requests.length, 0);
+
+      // Throwing the card away is not an answer: the agent is told nothing,
+      // because the point is that it is no longer listening.
+      assert.equal(agent.received.some(m => m.type === 'answer'), false);
+    } finally {
+      agent.close();
+    }
+  });
+});
+
+test('a request shows which of its candidates are already handed out here', async () => {
+  await withService({}, async ({ url, config }) => {
+    const server = '/private/tmp/tmux-501/default:16186:1788462695';
+    const busy = connectAgent(url, config.token, { cwd: '/Users/frank/Repos/foo', tmuxServer: server });
+    const asking = connectAgent(url, config.token, { cwd: '/Users/frank/Repos/bar', tmuxServer: server });
+    const elsewhere = connectAgent(url, config.token, {
+      cwd: '/Users/frank/Repos/baz',
+      tmuxServer: '/private/tmp/tmux-501/other:2:2',
+    });
+    try {
+      await busy.waitFor('welcome');
+      await elsewhere.waitFor('welcome');
+      busy.send({ type: 'grants', grants: [{ ...GRANT, target: '%3' }] });
+      elsewhere.send({ type: 'grants', grants: [{ ...GRANT, target: '%5' }] });
+      await new Promise(r => setTimeout(r, 200));
+
+      await asking.waitFor('welcome');
+      asking.send(REQUEST);
+      await new Promise(r => setTimeout(r, 200));
+
+      const [request] = (await inbox(url, config)).requests;
+      // %3 is taken on this very tmux server; %5 only looks the same but lives
+      // on another one, where that number means something else entirely.
+      assert.deepEqual(request.heldElsewhere, { '%3': '/Users/frank/Repos/foo' });
+    } finally {
+      busy.close();
+      asking.close();
+      elsewhere.close();
+    }
+  });
+});

@@ -111,6 +111,11 @@ one back lands at its next step — even if it was not connected at the time.
 If dispatch cannot be reached, the agent keeps working on the grant it already
 has: a service that is down must not silently take panes away.
 
+A candidate another agent already holds on the same tmux server is marked as
+such, so you do not hand the same pane out twice. The bin next to Deny throws a
+card away without answering it: for requests the agent has long forgotten, where
+answering only earns a refusal.
+
 ## Assigning without being asked
 
 The pool holds entries — a pane id like `%3`, or a glob over the candidate

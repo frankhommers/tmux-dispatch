@@ -299,6 +299,40 @@ export class AgentRegistry extends EventEmitter {
   }
 
   /**
+   * Forget a request without answering it. For cards left behind by an agent
+   * that is no longer listening: answering those only earns a refusal.
+   */
+  dismiss(accountId: number, id: string): boolean {
+    if (!this.getRequest(accountId, id)) return false;
+    this.requests.delete(id);
+    this.emit('change', accountId);
+    return true;
+  }
+
+  /**
+   * Which of these targets are already handed out on the same tmux server, and
+   * to whom. Matched on the fingerprint because a pane id only means something
+   * inside one server: the same number elsewhere is a different pane.
+   */
+  heldElsewhere(accountId: number, id: string): Record<string, string> {
+    const request = this.requests.get(id);
+    const asker = request && this.agents.get(request.agentId);
+    if (!request || !asker?.identity.tmuxServer) return {};
+
+    const held: Record<string, string> = {};
+    for (const agent of this.agents.values()) {
+      if (agent.accountId !== accountId || agent.id === asker.id) continue;
+      if (agent.identity.tmuxServer !== asker.identity.tmuxServer) continue;
+      for (const grant of agent.grants) {
+        if (request.candidates.some(c => c.id === grant.target)) {
+          held[grant.target] = agent.identity.cwd;
+        }
+      }
+    }
+    return held;
+  }
+
+  /**
    * What an agent holds and who it is, so a standing rule can be cut from a
    * grant that already works rather than typed out by hand.
    */

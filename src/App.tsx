@@ -3,10 +3,9 @@ import { Inbox, LogOut } from 'lucide-react';
 import { toast } from 'sonner';
 import { Button } from '@/components/ui/button';
 import { Toaster } from '@/components/ui/sonner';
-import { AgentsPanel } from '@/components/agents-panel';
 import { DevicesPanel } from '@/components/devices-panel';
 import { LinkDevice } from '@/components/link-device';
-import { PoolPanel } from '@/components/pool-panel';
+import { PanesPanel } from '@/components/panes-panel';
 import { RequestCard } from '@/components/request-card';
 import { SignIn } from '@/components/sign-in';
 import { useInbox, type Connection } from '@/hooks/use-inbox';
@@ -105,9 +104,7 @@ export default function App() {
           </div>
         )}
 
-        <PoolPanel />
-
-        <AgentsPanel agents={agents} onChanged={refresh} />
+        <PanesPanel agents={agents} onChanged={refresh} />
 
         <DevicesPanel />
       </div>

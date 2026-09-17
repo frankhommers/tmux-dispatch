@@ -112,6 +112,17 @@ export interface PoolEntry {
   cwd: string | null;
   /** The tmux server a bare id belongs to; the rule is void on any other. */
   tmuxServer: string | null;
+  /** The machine the rule was made on. */
+  host: string | null;
+  /**
+   * Whether an agent is connected from the tmux server this rule names, so the
+   * rule could fire right now. Null when it names none and there is nothing to
+   * be running.
+   */
+  live: boolean | null;
+  /** When the agent holding this pane last acted on it. */
+  lastActivity: number | null;
+  /** When this rule last handed a pane over. */
   usedAt: number | null;
   createdAt: number;
 }

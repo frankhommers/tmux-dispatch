@@ -1004,3 +1004,167 @@ test('a machine that is still connected cannot be forgotten', async () => {
     }
   });
 });
+
+/** Read the standing rules the way the browser does. */
+async function rules(url, config) {
+  return (await (await fetch(`${url}/api/pool`, {
+    headers: { Authorization: `Bearer ${config.token}` },
+  })).json()).pool;
+}
+
+test('keeping the same assignment twice leaves one rule, not two', async () => {
+  await withService({}, async ({ url, config }) => {
+    const agent = connectAgent(url, config.token, {
+      cwd: '/Users/frank/Repos/foo',
+      tmuxServer: 'socket:1:100',
+    });
+    try {
+      await agent.waitFor('welcome');
+      agent.send({ type: 'grants', grants: [GRANT] });
+      await new Promise(r => setTimeout(r, 200));
+
+      const { agents } = await inbox(url, config);
+      const keep = () => fetch(`${url}/api/agents/${agents[0].id}/keep`, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json', Authorization: `Bearer ${config.token}` },
+        body: JSON.stringify({ target: '%3' }),
+      });
+      const first = await (await keep()).json();
+      const second = await (await keep()).json();
+
+      assert.equal(second.entry.id, first.entry.id, 'the second press must find the rule it already made');
+      assert.equal((await rules(url, config)).length, 1);
+    } finally {
+      agent.close();
+    }
+  });
+});
+
+test('a standing rule is swept away when its tmux server restarts', async () => {
+  await withService({}, async ({ url, config, service }) => {
+    const account = localAccount(service.store);
+    service.store.addPoolEntry(account.id, '%3', 'pane', true, {
+      cwd: '/Users/frank/Repos/foo',
+      tmuxServer: '/private/tmp/tmux-501/default:100:1000',
+      host: 'test',
+    });
+    // Bound to a tmux server that is still running elsewhere: not ours to drop.
+    service.store.addPoolEntry(account.id, '%9', 'pane', true, {
+      cwd: '/Users/frank/Repos/foo',
+      tmuxServer: '/private/tmp/tmux-501/other:100:1000',
+      host: 'test',
+    });
+    // Another machine may well have a tmux on that same socket path, happily
+    // running. A socket path is not a machine, so it is not ours to sweep.
+    service.store.addPoolEntry(account.id, '%4', 'pane', true, {
+      cwd: '/Users/frank/Repos/foo',
+      tmuxServer: '/private/tmp/tmux-501/default:100:1000',
+      host: 'other-laptop',
+    });
+
+    // Same socket, newer start time: that tmux is gone and %3 means nothing.
+    const agent = connectAgent(url, config.token, {
+      cwd: '/Users/frank/Repos/foo',
+      tmuxServer: '/private/tmp/tmux-501/default:200:2000',
+    });
+    try {
+      await agent.waitFor('welcome');
+      await new Promise(r => setTimeout(r, 200));
+
+      const pool = await rules(url, config);
+      assert.deepEqual(pool.map(entry => entry.pattern), ['%9', '%4'],
+        'only this machine\'s rule on the restarted tmux server should be swept');
+    } finally {
+      agent.close();
+    }
+  });
+});
+
+test('the pool reports whether a rule can still fire', async () => {
+  await withService({}, async ({ url, config, service }) => {
+    const account = localAccount(service.store);
+    service.store.addPoolEntry(account.id, '%3', 'pane', true, { tmuxServer: 'socket:1:100' });
+    service.store.addPoolEntry(account.id, '%7', 'pane', true, { tmuxServer: 'elsewhere:1:100' });
+    service.store.addPoolEntry(account.id, '*agents:*', 'pane', true);
+
+    const agent = connectAgent(url, config.token, { cwd: '/Users/frank/Repos/foo', tmuxServer: 'socket:1:100' });
+    try {
+      await agent.waitFor('welcome');
+      const pool = await rules(url, config);
+      const live = Object.fromEntries(pool.map(entry => [entry.pattern, entry.live]));
+
+      assert.equal(live['%3'], true, 'an agent is connected on exactly this tmux server');
+      assert.equal(live['%7'], false, 'nothing is connected on that tmux server');
+      assert.equal(live['*agents:*'], null, 'a rule bound to no tmux server has nothing to report');
+    } finally {
+      agent.close();
+    }
+  });
+});
+
+test('a standing rule records when it last handed out a pane', async () => {
+  await withService({}, async ({ url, config, service }) => {
+    const account = localAccount(service.store);
+    const before = Date.now();
+    service.store.addPoolEntry(account.id, '%3', 'pane', true, { tmuxServer: 'socket:1:100' });
+
+    const agent = connectAgent(url, config.token, { cwd: '/Users/frank/Repos/foo', tmuxServer: 'socket:1:100' });
+    try {
+      await agent.waitFor('welcome');
+      agent.send(REQUEST);
+      await agent.waitFor('answer');
+
+      const [entry] = await rules(url, config);
+      assert.ok(entry.usedAt >= before, 'a reusable rule should still say when it last fired');
+
+      // And it keeps answering: a standing rule is not spent by being used.
+      agent.send({ ...REQUEST, id: 'r-again' });
+      const again = await agent.waitFor('answer', 4000, m => m.id === 'r-again');
+      assert.equal(again.target, '%3');
+    } finally {
+      agent.close();
+    }
+  });
+});
+
+test('a rule shows what the agent holding its pane is doing', async () => {
+  await withService({}, async ({ url, config, service }) => {
+    const account = localAccount(service.store);
+    service.store.addPoolEntry(account.id, '%3', 'pane', true, {
+      cwd: '/Users/frank/Repos/foo',
+      tmuxServer: 'socket:1:100',
+    });
+
+    const agent = connectAgent(url, config.token, { cwd: '/Users/frank/Repos/foo', tmuxServer: 'socket:1:100' });
+    try {
+      await agent.waitFor('welcome');
+      agent.send({ type: 'grants', grants: [GRANT] });
+      const before = Date.now();
+      agent.send({ type: 'check', id: 'c-1', target: '%3' });
+      await agent.waitFor('verdict');
+
+      const [entry] = await rules(url, config);
+      assert.ok(entry.lastActivity >= before, 'the check the agent just made is the rule\'s activity');
+    } finally {
+      agent.close();
+    }
+  });
+});
+
+test('a rule from before hosts were recorded adopts the one it is running on', async () => {
+  await withService({}, async ({ url, config, service }) => {
+    const account = localAccount(service.store);
+    // What an older version stored: bound to a tmux server, but to no machine.
+    service.store.addPoolEntry(account.id, '%3', 'pane', true, { tmuxServer: 'socket:1:100' });
+
+    const agent = connectAgent(url, config.token, { cwd: '/Users/frank/Repos/foo', tmuxServer: 'socket:1:100' });
+    try {
+      await agent.waitFor('welcome');
+      await new Promise(r => setTimeout(r, 200));
+      const [entry] = await rules(url, config);
+      assert.equal(entry.host, 'test', 'the agent running on that very server says which machine it is');
+    } finally {
+      agent.close();
+    }
+  });
+});

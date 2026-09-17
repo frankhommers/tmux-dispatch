@@ -60,7 +60,7 @@ export interface ConnectedAgent {
 }
 
 /** `socket:pid:start_time`, read from the right since a path may hold a colon. */
-function parseTmuxServer(fingerprint: string | undefined): { socket: string; startedAt: number } | null {
+export function parseTmuxServer(fingerprint: string | undefined): { socket: string; startedAt: number } | null {
   if (!fingerprint) return null;
   const parts = fingerprint.split(':');
   if (parts.length < 3) return null;
@@ -328,6 +328,40 @@ export class AgentRegistry extends EventEmitter {
         this.agents.delete(id);
       }
     }
+    // Standing rules naming an id on that server are just as void, but they
+    // live in the database, which this registry does not reach into.
+    this.emit('tmux-restarted', {
+      accountId: newcomer.accountId,
+      host: newcomer.identity.host,
+      tmuxServer: newcomer.identity.tmuxServer ?? null,
+      socket: current.socket,
+      startedAt: current.startedAt,
+    });
+  }
+
+  /** Every tmux server an agent is connected from right now. */
+  liveTmuxServers(accountId: number): Set<string> {
+    const live = new Set<string>();
+    for (const agent of this.agents.values()) {
+      if (agent.accountId !== accountId || !agent.connected) continue;
+      if (agent.identity.tmuxServer) live.add(agent.identity.tmuxServer);
+    }
+    return live;
+  }
+
+  /**
+   * When a target on a given tmux server was last acted on, across whoever
+   * holds it. Null when nobody dispatch knows about has touched it.
+   */
+  activityOn(accountId: number, target: string, tmuxServer: string | null): number | null {
+    let newest: number | null = null;
+    for (const agent of this.agents.values()) {
+      if (agent.accountId !== accountId) continue;
+      if (tmuxServer && agent.identity.tmuxServer !== tmuxServer) continue;
+      const at = agent.activity.get(target);
+      if (at !== undefined && (newest === null || at > newest)) newest = at;
+    }
+    return newest;
   }
 
   /**

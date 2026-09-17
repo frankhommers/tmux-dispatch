@@ -40,6 +40,8 @@ export interface PoolEntry {
    * elsewhere. Empty for label globs, which mean the same on any server.
    */
   tmuxServer: string | null;
+  /** The machine the rule was made on, so a sweep never crosses hosts. */
+  host: string | null;
   usedAt: number | null;
   createdAt: number;
 }
@@ -87,6 +89,22 @@ export class Store {
 
     this.addColumnIfMissing('pool', 'cwd', 'TEXT');
     this.addColumnIfMissing('pool', 'tmux_server', 'TEXT');
+    this.addColumnIfMissing('pool', 'host', 'TEXT');
+    this.collapseDuplicatePoolEntries();
+  }
+
+  /**
+   * Keeping an assignment used to add a rule per press, so the same rule could
+   * be stored several times over. They said one thing, so they become one row:
+   * the oldest, which is the one the human actually made.
+   */
+  private collapseDuplicatePoolEntries(): void {
+    this.db.exec(`
+      DELETE FROM pool WHERE id NOT IN (
+        SELECT MIN(id) FROM pool
+        GROUP BY account_id, pattern, kind, IFNULL(cwd, ''), IFNULL(tmux_server, '')
+      );
+    `);
   }
 
   /**
@@ -172,27 +190,41 @@ export class Store {
     return Number(result.changes) > 0;
   }
 
+  /**
+   * A rule is what it says, not how often it was said: pressing keep twice
+   * finds the rule the first press made instead of stacking a copy on it.
+   */
   addPoolEntry(
     accountId: number,
     pattern: string,
     kind: PoolMatch,
     reusable: boolean,
-    bound: { cwd?: string; tmuxServer?: string } = {}
+    bound: { cwd?: string; tmuxServer?: string; host?: string } = {}
   ): PoolEntry {
     const createdAt = Date.now();
     const cwd = bound.cwd ?? null;
     const tmuxServer = bound.tmuxServer ?? null;
+    const host = bound.host ?? null;
+
+    const existing = this.listPool(accountId).find(
+      entry => entry.pattern === pattern
+        && entry.kind === kind
+        && entry.cwd === cwd
+        && entry.tmuxServer === tmuxServer
+    );
+    if (existing) return existing;
+
     this.db.prepare(
-      'INSERT INTO pool (account_id, pattern, kind, reusable, cwd, tmux_server, created_at) VALUES (?, ?, ?, ?, ?, ?, ?)'
-    ).run(accountId, pattern, kind, reusable ? 1 : 0, cwd, tmuxServer, createdAt);
+      'INSERT INTO pool (account_id, pattern, kind, reusable, cwd, tmux_server, host, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)'
+    ).run(accountId, pattern, kind, reusable ? 1 : 0, cwd, tmuxServer, host, createdAt);
     const id = Number((this.db.prepare('SELECT last_insert_rowid() AS id').get() as { id: number }).id);
-    return { id, accountId, pattern, kind, reusable, cwd, tmuxServer, usedAt: null, createdAt };
+    return { id, accountId, pattern, kind, reusable, cwd, tmuxServer, host, usedAt: null, createdAt };
   }
 
   listPool(accountId: number): PoolEntry[] {
     const rows = this.db.prepare(
-      'SELECT id, account_id, pattern, kind, reusable, cwd, tmux_server, used_at, created_at FROM pool WHERE account_id = ? ORDER BY created_at'
-    ).all(accountId) as Array<{ id: number; account_id: number; pattern: string; kind: string; reusable: number; cwd: string | null; tmux_server: string | null; used_at: number | null; created_at: number }>;
+      'SELECT id, account_id, pattern, kind, reusable, cwd, tmux_server, host, used_at, created_at FROM pool WHERE account_id = ? ORDER BY created_at, id'
+    ).all(accountId) as Array<{ id: number; account_id: number; pattern: string; kind: string; reusable: number; cwd: string | null; tmux_server: string | null; host: string | null; used_at: number | null; created_at: number }>;
     return rows.map(row => ({
       id: row.id,
       accountId: row.account_id,
@@ -201,13 +233,24 @@ export class Store {
       reusable: row.reusable === 1,
       cwd: row.cwd,
       tmuxServer: row.tmux_server,
+      host: row.host,
       usedAt: row.used_at,
       createdAt: row.created_at,
     }));
   }
 
+  /**
+   * When this rule last handed a pane over. A one-shot rule is spent by it —
+   * `entryMatches` refuses a used one — while a standing rule only gains a
+   * date, which is the honest answer to "is this thing still in use?".
+   */
   markPoolUsed(id: number): void {
-    this.db.prepare('UPDATE pool SET used_at = ? WHERE id = ? AND reusable = 0').run(Date.now(), id);
+    this.db.prepare('UPDATE pool SET used_at = ? WHERE id = ?').run(Date.now(), id);
+  }
+
+  /** Name the machine a rule was made on, once something proves which it is. */
+  setPoolHost(accountId: number, id: number, host: string): void {
+    this.db.prepare('UPDATE pool SET host = ? WHERE id = ? AND account_id = ?').run(host, id, accountId);
   }
 
   clearPoolUsed(id: number): void {

@@ -7,7 +7,7 @@ import { WebSocketServer } from 'ws';
 
 import type { Config } from './config.js';
 import { Store } from './db.js';
-import { AgentRegistry } from './agents.js';
+import { AgentRegistry, parseTmuxServer } from './agents.js';
 import { Pairings } from './devices.js';
 import { findPoolMatch } from './pool.js';
 import {
@@ -89,6 +89,29 @@ async function serveStatic(pathname: string, res: ServerResponse): Promise<void>
 export async function startService(config: Config): Promise<Service> {
   const store = new Store(config.databasePath);
   const agents = new AgentRegistry();
+
+  // A tmux server that restarted takes the meaning of its ids with it, so the
+  // standing rules naming one are swept with the sessions that held them.
+  // Only rules made on the same machine: a socket path says nothing about which
+  // host it is on, and elsewhere that tmux may be running perfectly well.
+  agents.on('tmux-restarted', ({ accountId, host, tmuxServer, socket, startedAt }: {
+    accountId: number; host: string; tmuxServer: string | null; socket: string; startedAt: number;
+  }) => {
+    for (const entry of store.listPool(accountId)) {
+      // Rules made before machines were recorded say which tmux server they
+      // are on but not whose. An agent connected from exactly that server
+      // answers it, and the rule can be swept like any other from then on.
+      if (entry.host === null && tmuxServer !== null && entry.tmuxServer === tmuxServer) {
+        store.setPoolHost(accountId, entry.id, host);
+        continue;
+      }
+      if (entry.host !== host) continue;
+      const theirs = parseTmuxServer(entry.tmuxServer ?? undefined);
+      if (theirs && theirs.socket === socket && theirs.startedAt < startedAt) {
+        store.removePoolEntry(accountId, entry.id);
+      }
+    }
+  });
   const pairings = new Pairings();
   const throttle = new Throttle();
   const subscribers = new Set<{ accountId: number; res: ServerResponse }>();
@@ -325,6 +348,7 @@ export async function startService(config: Config): Promise<Service> {
         entry: store.addPoolEntry(accountId, held.grant.target, held.grant.kind, true, {
           cwd: held.identity.cwd,
           tmuxServer: held.identity.tmuxServer,
+          host: held.identity.host,
         }),
       });
       return;
@@ -343,7 +367,16 @@ export async function startService(config: Config): Promise<Service> {
     }
 
     if (path === '/api/pool' && req.method === 'GET') {
-      sendJson(res, 200, { pool: store.listPool(accountId) });
+      const live = agents.liveTmuxServers(accountId);
+      sendJson(res, 200, {
+        pool: store.listPool(accountId).map(entry => ({
+          ...entry,
+          // Null, not false, when the rule names no tmux server: there is
+          // nothing to be running, so there is nothing to report.
+          live: entry.tmuxServer === null ? null : live.has(entry.tmuxServer),
+          lastActivity: agents.activityOn(accountId, entry.pattern, entry.tmuxServer),
+        })),
+      });
       return;
     }
 

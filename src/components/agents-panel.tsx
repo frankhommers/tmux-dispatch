@@ -4,20 +4,8 @@ import { toast } from 'sonner';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader } from '@/components/ui/card';
 import { forgetAgent, keepGrant, parseLabel, revokeGrant, type ConnectedAgent } from '@/lib/api';
+import { ago, projectName } from '@/lib/format';
 import { cn } from '@/lib/utils';
-
-/** "3m ago", close enough for a list that refreshes itself. */
-function ago(at: number): string {
-  const seconds = Math.max(0, Math.round((Date.now() - at) / 1000));
-  if (seconds < 60) return `${seconds}s ago`;
-  if (seconds < 3600) return `${Math.round(seconds / 60)}m ago`;
-  return `${Math.round(seconds / 3600)}h ago`;
-}
-
-/** A project as you would name it: the last segment of its path. */
-function projectName(cwd: string): string {
-  return cwd.replace(/\/+$/, '').split('/').pop() || cwd;
-}
 
 interface Props {
   agents: ConnectedAgent[];

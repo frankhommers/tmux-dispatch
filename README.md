@@ -3,9 +3,13 @@
 [![Container build](https://github.com/frankhommers/tmux-dispatch/actions/workflows/container.yml/badge.svg)](https://github.com/frankhommers/tmux-dispatch/actions/workflows/container.yml)
 [![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
 
-The dispatch service for [tmux-mcp](https://github.com/frankhommers/tmux-mcp): a web
+The optional dispatch service for [tmux-mcp](https://github.com/frankhommers/tmux-mcp): a web
 service where a human answers an agent's request for a tmux pane, from a
 laptop or a phone.
+
+tmux-mcp works independently by default. Human-assigned access is opt-in, and
+even in that mode the CLI and assign hooks work without this web service.
+Use tmux-dispatch when you want a browser inbox for those assignments.
 
 Approve or deny requests, pin panes for automatic assignment, revoke access,
 and manage paired machines. Accounts and assignments persist in SQLite.
@@ -121,15 +125,17 @@ the volume also deletes this state.
 
 ## Connecting a machine
 
-Dispatch support currently lives on tmux-mcp's
-[`feat/dispatch-inbox` branch](https://github.com/frankhommers/tmux-mcp/tree/feat/dispatch-inbox).
-Until it is merged into its default branch, use that version on your tmux host:
+Dispatch support is included in
+[tmux-mcp 0.3.0](https://github.com/frankhommers/tmux-mcp/releases/tag/v0.3.0)
+and on its default branch. The commands below pin that release on your tmux
+host. Both `--human-assigned` and `--dispatch-url` are needed to use this
+optional web inbox:
 
 ```bash
-npx --prefer-online -y github:frankhommers/tmux-mcp#feat/dispatch-inbox dispatch-login --url https://tmux.example.com
+npx --prefer-online -y github:frankhommers/tmux-mcp#v0.3.0 dispatch-login --url https://tmux.example.com
 # Open https://tmux.example.com/link and enter: WQ7F-2K9P
 
-npx --prefer-online -y github:frankhommers/tmux-mcp#feat/dispatch-inbox --human-assigned --dispatch-url wss://tmux.example.com/agent
+npx --prefer-online -y github:frankhommers/tmux-mcp#v0.3.0 --human-assigned --dispatch-url wss://tmux.example.com/agent
 ```
 
 Pairing is a device-code flow, so no secret is ever pasted by hand. Devices

@@ -1,13 +1,26 @@
 import assert from 'node:assert/strict';
 import { randomUUID } from 'node:crypto';
+import { mkdtemp, rm } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+import { Store } from '../server-dist/db.js';
 import test from 'node:test';
 import { WebSocket } from 'ws';
 
 import { loadConfig } from '../server-dist/config.js';
 import { startService } from '../server-dist/http.js';
 import { localAccount } from '../server-dist/auth.js';
+import { parseAgentMessage } from '../server-dist/protocol.js';
 
-const PROTOCOL_VERSION = '1.5';
+const PROTOCOL_VERSION = '1.6';
+
+test('malformed inventory validation is ignored', () => {
+  const frame = { type: 'validation', id: 'v-1', tmuxServer: '/socket:1:100', missing: ['%3', '@4'] };
+  assert.deepEqual(parseAgentMessage(JSON.stringify(frame)), frame);
+  for (const missing of [null, '%3', ['*'], ['%3', 4]]) {
+    assert.equal(parseAgentMessage(JSON.stringify({ ...frame, missing })), null);
+  }
+});
 
 async function withService(env, run) {
   const config = loadConfig({ PORT: '0', DATABASE_PATH: ':memory:', SESSION_SECRET: 'test-secret', ...env });
@@ -1012,6 +1025,73 @@ async function rules(url, config) {
   })).json()).pool;
 }
 
+test('a fresh inventory removes only confirmed missing ids from the same machine and server', async () => {
+  await withService({}, async ({ url, config, service }) => {
+    const account = localAccount(service.store);
+    const otherAccount = service.store.upsertAccount('other-inventory', 'Other');
+    const server = '/socket:1:100';
+    const bound = { host: 'test', tmuxServer: server };
+    const dead = service.store.addPoolEntry(account.id, '%3', 'pane', true, bound);
+    const deadWindow = service.store.addPoolEntry(account.id, '@4', 'window', true, bound);
+    const alive = service.store.addPoolEntry(account.id, '%5', 'pane', true, bound);
+    const pattern = service.store.addPoolEntry(account.id, '*agents:*', 'pane', true, bound);
+    const elsewhere = service.store.addPoolEntry(account.id, '%3', 'pane', true, { ...bound, cwd: '/other', host: 'other-host' });
+    const otherServer = service.store.addPoolEntry(account.id, '%3', 'pane', true, { ...bound, tmuxServer: '/other:1:100' });
+    const unbound = service.store.addPoolEntry(account.id, '%3', 'pane', true);
+    const privateRule = service.store.addPoolEntry(otherAccount.id, '%3', 'pane', true, bound);
+    const vanished = connectAgent(url, config.token, { tmuxServer: server });
+    const inspector = connectAgent(url, config.token, { tmuxServer: server });
+    try {
+      await vanished.waitFor('welcome');
+      vanished.send({ type: 'grants', grants: [GRANT] });
+      await new Promise(resolve => setTimeout(resolve, 100));
+      vanished.close();
+      await new Promise(resolve => setTimeout(resolve, 100));
+      await inspector.waitFor('welcome');
+      inspector.send({ type: 'inventory-changed' });
+      const check = await inspector.waitFor('validate');
+      assert.deepEqual(check.targets.sort(), ['%3', '%5', '@4']);
+
+      // An id first seen after this check started must not be swept by its reply.
+      const fresh = service.store.addPoolEntry(account.id, '%99', 'pane', true, bound);
+      for (const reply of [
+        { ...check, id: 'unsolicited', missing: ['%3'] },
+        { ...check, tmuxServer: '/different:1:100', missing: ['%3'] },
+        { ...check, missing: ['%3', '%99'] },
+      ]) inspector.send({ ...reply, type: 'validation' });
+      await new Promise(resolve => setTimeout(resolve, 100));
+      assert.ok((await rules(url, config)).some(rule => rule.id === dead.id));
+
+      inspector.send({ type: 'validation', id: check.id, tmuxServer: server, missing: ['%3', '@4'] });
+      await new Promise(resolve => setTimeout(resolve, 100));
+      assert.deepEqual((await rules(url, config)).map(rule => rule.id),
+        [alive, pattern, elsewhere, otherServer, unbound, fresh].map(rule => rule.id));
+      assert.deepEqual(service.store.listPool(otherAccount.id).map(rule => rule.id), [privateRule.id]);
+      assert.equal((await inbox(url, config)).agents.flatMap(agent => agent.grants).length, 0);
+      assert.equal(service.store.loadAgents().flatMap(agent => agent.grants).length, 0, 'cleanup is persisted');
+      assert.ok(!(await rules(url, config)).some(rule => rule.id === deadWindow.id));
+    } finally {
+      vanished.close();
+      inspector.close();
+    }
+  });
+});
+
+test('disconnecting without an inventory result preserves pinned ids', async () => {
+  await withService({}, async ({ url, config, service }) => {
+    const account = localAccount(service.store);
+    const server = '/socket:1:100';
+    const entry = service.store.addPoolEntry(account.id, '%3', 'pane', true, { host: 'test', tmuxServer: server });
+    const agent = connectAgent(url, config.token, { tmuxServer: server });
+    await agent.waitFor('welcome');
+    agent.send({ type: 'inventory-changed' });
+    await agent.waitFor('validate');
+    agent.close();
+    await new Promise(resolve => setTimeout(resolve, 100));
+    assert.deepEqual((await rules(url, config)).map(rule => rule.id), [entry.id]);
+  });
+});
+
 test('keeping the same assignment twice leaves one rule, not two', async () => {
   await withService({}, async ({ url, config }) => {
     const agent = connectAgent(url, config.token, {
@@ -1166,5 +1246,166 @@ test('a rule from before hosts were recorded adopts the one it is running on', a
     } finally {
       agent.close();
     }
+  });
+});
+
+
+/** Restart the actual service against one on-disk database. */
+async function withPersistentService(run) {
+  const directory = await mkdtemp(join(tmpdir(), 'tmux-dispatch-persistence-'));
+  const config = loadConfig({ PORT: '0', DATABASE_PATH: join(directory, 'state.db'), SESSION_SECRET: 'test-secret' });
+  let service = await startService(config);
+  const restart = async () => {
+    await service.close();
+    service = await startService(config);
+    return service;
+  };
+  try {
+    await run({ service, config, restart });
+  } finally {
+    await service.close();
+    await rm(directory, { recursive: true, force: true });
+  }
+}
+
+test('assignments and activity are committed before shutdown and restored without pending requests', async () => {
+  await withPersistentService(async ({ service, config, restart }) => {
+    const instanceId = randomUUID();
+    const agent = connectAgent(service.url, config.token, { instanceId });
+    await agent.waitFor('welcome');
+    agent.send({ type: 'grants', grants: [{ ...GRANT, reason: 'persistent assignment' }] });
+    agent.send(REQUEST);
+    agent.send({ type: 'check', id: 'persist-check', target: GRANT.target });
+    await agent.waitFor('verdict');
+    const before = await inbox(service.url, config);
+
+    // A separate SQLite connection can read the change while the server is
+    // running: durability does not depend on a graceful shutdown hook.
+    const reader = new Store(config.databasePath);
+    try {
+      const saved = reader.loadAgents();
+      assert.equal(saved.length, 1);
+      assert.equal(saved[0].grants[0].reason, 'persistent assignment');
+      assert.equal(saved[0].activity[0][1], before.agents[0].grants[0].lastActivity);
+    } finally { reader.close(); }
+
+    service = await restart();
+    const after = await inbox(service.url, config);
+    assert.equal(after.agents.length, 1);
+    assert.equal(after.agents[0].id, instanceId);
+    assert.equal(after.agents[0].connected, false);
+    assert.deepEqual(after.agents[0].grants, before.agents[0].grants);
+    assert.deepEqual(after.requests, []);
+
+    const again = connectAgent(service.url, config.token, { instanceId });
+    await again.waitFor('welcome');
+    assert.equal((await inbox(service.url, config)).agents.length, 1);
+    again.close();
+  });
+});
+
+test('hidden revocations survive restart and still refuse the returning agent', async () => {
+  await withPersistentService(async ({ service, config, restart }) => {
+    const instanceId = randomUUID();
+    const agent = connectAgent(service.url, config.token, { instanceId });
+    await agent.waitFor('welcome');
+    agent.send({ type: 'grants', grants: [GRANT] });
+    agent.send({ type: 'check', id: 'before-revoke', target: GRANT.target });
+    await agent.waitFor('verdict');
+    const accountId = localAccount(service.store).id;
+    assert.equal(service.agents.revoke(accountId, instanceId, GRANT.target), true);
+    await agent.waitFor('revoke');
+
+    service = await restart();
+    assert.deepEqual((await inbox(service.url, config)).agents, []);
+    assert.equal(service.agents.forget(accountId, instanceId), 'forgotten');
+    service = await restart();
+    const again = connectAgent(service.url, config.token, { instanceId });
+    await again.waitFor('welcome');
+    again.send({ type: 'grants', grants: [GRANT] });
+    again.send({ type: 'check', id: 'after-restart', target: GRANT.target });
+    assert.equal((await again.waitFor('verdict')).allowed, false);
+    assert.deepEqual((await inbox(service.url, config)).agents[0].grants, []);
+
+    // Once a human grants it again, the settled revocation must also stay gone.
+    again.send({ type: 'grants', grants: [{ ...GRANT, since: Date.now() + 1000 }] });
+    again.send({ type: 'check', id: 'reassigned', target: GRANT.target });
+    assert.equal((await again.waitFor('verdict', 4000, m => m.id === 'reassigned')).allowed, true);
+    service = await restart();
+    const third = connectAgent(service.url, config.token, { instanceId });
+    await third.waitFor('welcome');
+    third.send({ type: 'check', id: 'settled', target: GRANT.target });
+    assert.equal((await third.waitFor('verdict')).allowed, true);
+    third.close();
+  });
+});
+
+test('forgotten agents and unpaired machines do not return after restart', async () => {
+  await withPersistentService(async ({ service, config, restart }) => {
+    const accountId = localAccount(service.store).id;
+    const { device, token } = service.store.createDevice(accountId, 'persistent-device');
+    const forgottenId = randomUUID();
+    const gone = connectAgent(service.url, config.token, { instanceId: forgottenId });
+    const paired = connectAgent(service.url, token);
+    for (const agent of [gone, paired]) {
+      await agent.waitFor('welcome');
+      agent.send({ type: 'grants', grants: [GRANT] });
+      agent.send({ type: 'check', id: 'ready', target: GRANT.target });
+      await agent.waitFor('verdict');
+    }
+    service = await restart();
+    assert.equal((await inbox(service.url, config)).agents.length, 2);
+    assert.equal(service.agents.forget(accountId, forgottenId), 'forgotten');
+    service.store.revokeDevice(accountId, device.id);
+    service.agents.dropDevice(device.id);
+    service = await restart();
+    assert.deepEqual((await inbox(service.url, config)).agents, []);
+    assert.deepEqual(service.store.loadAgents(), []);
+  });
+});
+
+test('a restarted tmux server still removes restored obsolete assignments', async () => {
+  await withPersistentService(async ({ service, config, restart }) => {
+    const old = connectAgent(service.url, config.token, { tmuxServer: '/tmp/tmux:1:100' });
+    await old.waitFor('welcome');
+    old.send({ type: 'grants', grants: [GRANT] });
+    old.send({ type: 'check', id: 'ready', target: GRANT.target });
+    await old.waitFor('verdict');
+    service = await restart();
+    assert.equal((await inbox(service.url, config)).agents.length, 1);
+    const fresh = connectAgent(service.url, config.token, { tmuxServer: '/tmp/tmux:2:200' });
+    await fresh.waitFor('welcome');
+    assert.equal((await inbox(service.url, config)).agents.every(agent => agent.grants.length === 0), true);
+    service = await restart();
+    assert.deepEqual((await inbox(service.url, config)).agents, []);
+  });
+});
+
+
+test('restored state belongs to its authenticated device and account', async () => {
+  await withPersistentService(async ({ service, config, restart }) => {
+    const accountId = localAccount(service.store).id;
+    const owner = service.store.createDevice(accountId, 'owner');
+    const other = service.store.createDevice(accountId, 'other');
+    const instanceId = randomUUID();
+    const agent = connectAgent(service.url, owner.token, { instanceId });
+    await agent.waitFor('welcome');
+    agent.send({ type: 'grants', grants: [GRANT] });
+    agent.send({ type: 'check', id: 'ready', target: GRANT.target });
+    await agent.waitFor('verdict');
+    service = await restart();
+    const wrongDevice = connectAgent(service.url, other.token, { instanceId });
+    assert.equal((await wrongDevice.waitFor('refuse')).reason, 'unauthorized');
+    assert.equal((await inbox(service.url, config)).agents[0].connected, false);
+
+    const outsiderAccount = service.store.upsertAccount('outside', 'Outside');
+    const outsider = service.store.createDevice(outsiderAccount.id, 'outside');
+    const wrongAccount = connectAgent(service.url, outsider.token, { instanceId });
+    assert.equal((await wrongAccount.waitFor('refuse')).reason, 'unauthorized');
+
+    // Simulate a crash between deleting a pairing and clearing its registry rows.
+    service.store.revokeDevice(accountId, owner.device.id);
+    service = await restart();
+    assert.deepEqual((await inbox(service.url, config)).agents, []);
   });
 });

@@ -1,13 +1,13 @@
 services:
   tmux-dispatch:
-    build: .
+    image: ${TMUX_DISPATCH_IMAGE:-ghcr.io/frankhommers/tmux-dispatch:latest}
     # Publish on loopback for a local deployment; put a TLS proxy in front
     # when this is reachable from the internet.
     ports: ["127.0.0.1:7676:7676"]
     environment:
       PUBLIC_URL: ${PUBLIC_URL:-http://127.0.0.1:7676}
       DATABASE_PATH: /data/tmux-mcp.db
-      SESSION_SECRET: ${SESSION_SECRET:-change-me}
+      SESSION_SECRET: ${SESSION_SECRET:?Set SESSION_SECRET in .env (openssl rand -hex 32)}
       # Sign-in is picked by what you set. Leaving these empty is not an
       # error: the service falls back to a token printed at startup.
       #   ADMIN_PASSWORD  a single password prompt, 12 characters or more

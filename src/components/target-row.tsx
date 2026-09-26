@@ -34,11 +34,11 @@ export function TargetRow({ target, busy, selected, suggested, heldBy, onSelect,
           }
         }}
         className={cn(
-          'group flex items-center gap-3 rounded-lg border border-transparent px-3 py-2.5',
+          'group flex flex-wrap items-center gap-3 rounded-lg border border-border px-3 py-3',
           'cursor-pointer transition-colors outline-none',
           'hover:border-border hover:bg-accent/60',
           'focus-visible:border-ring focus-visible:bg-accent/60',
-          selected && 'border-border bg-accent/60',
+          selected && 'border-live/60 bg-live/10',
           busy && 'pointer-events-none opacity-50'
         )}
       >
@@ -65,9 +65,9 @@ export function TargetRow({ target, busy, selected, suggested, heldBy, onSelect,
           </span>
         )}
 
-        <span className="min-w-0 flex-1 truncate text-sm text-muted-foreground">
+        <span className="min-w-[6rem] flex-1 break-words text-sm text-muted-foreground">
           {location}
-          {title && <span className="ml-2 opacity-70">{title}</span>}
+          {title && <span className="ml-2">{title}</span>}
         </span>
 
         <Button
@@ -77,11 +77,8 @@ export function TargetRow({ target, busy, selected, suggested, heldBy, onSelect,
             event.stopPropagation();
             onAssign();
           }}
-          className={cn(
-            'shrink-0 opacity-0 transition-opacity',
-            'group-hover:opacity-100 group-focus-visible:opacity-100',
-            selected && 'opacity-100'
-          )}
+          disabled={busy}
+          className="shrink-0"
         >
           Assign
           <ArrowRight className="size-3.5" />

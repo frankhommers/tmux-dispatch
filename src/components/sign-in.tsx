@@ -66,8 +66,8 @@ export function SignIn({ authMode, onSignedIn }: { authMode: AuthMode; onSignedI
 
 function Shell({ children }: { children: React.ReactNode }) {
   return (
-    <div className="aurora flex min-h-dvh items-center justify-center p-6">
-      <Card className="w-full max-w-sm border-border/60 shadow-xl shadow-black/10">
+    <div className="flex min-h-dvh items-center justify-center p-6">
+      <Card className="w-full max-w-sm border-border shadow-sm">
         <CardHeader>
           <h1 className="text-lg font-semibold tracking-tight">tmux-dispatch</h1>
         </CardHeader>

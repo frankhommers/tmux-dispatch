@@ -7,3 +7,9 @@ server-dist/
 
 # Local secrets, never committed
 .env
+.env.*
+!.env.example
+*.db
+*.db-*
+*.sqlite*
+*.tsbuildinfo

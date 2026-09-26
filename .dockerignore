@@ -1,0 +1,14 @@
+.git
+.github
+node_modules
+dist
+server-dist
+data
+.env
+.env.*
+*.db
+*.db-*
+*.sqlite*
+*.log
+*.tsbuildinfo
+.DS_Store

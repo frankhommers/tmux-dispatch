@@ -1,4 +1,6 @@
 import { EventEmitter } from 'node:events';
+import { randomUUID } from 'node:crypto';
+import type { Store } from './db.js';
 import type { WebSocket } from 'ws';
 import {
   PROTOCOL_VERSION,
@@ -69,12 +71,35 @@ export function parseTmuxServer(fingerprint: string | undefined): { socket: stri
   return { socket: parts.slice(0, -2).join(':'), startedAt };
 }
 
-let nextAnonymousId = 1;
-
 export class AgentRegistry extends EventEmitter {
   private readonly sockets = new Map<string, WebSocket>();
   private readonly agents = new Map<string, ConnectedAgent>();
   private readonly requests = new Map<string, OpenRequest>();
+  private readonly validations = new Map<string, {
+    id: string; tmuxServer: string; targets: Set<string>; expiresAt: number;
+  }>();
+
+  constructor(private readonly store: Store) {
+    super();
+    for (const saved of store.loadAgents()) {
+      this.agents.set(saved.id, {
+        ...saved,
+        connected: false,
+        revoked: new Map(saved.revoked),
+        activity: new Map(saved.activity),
+      });
+    }
+    // This listener runs before HTTP subscribers: a published change is durable,
+    // including revocations for agents that are currently invisible in the UI.
+    this.on('change', (accountId: number) => {
+      const saved = [...this.agents.values()]
+        .filter(agent => agent.accountId === accountId && (agent.grants.length > 0 || agent.revoked.size > 0))
+        .map(({ connected: _connected, revoked, activity, ...agent }) => ({
+          ...agent, revoked: [...revoked], activity: [...activity],
+        }));
+      store.saveAgents(accountId, saved);
+    });
+  }
 
   /** Take over a freshly authenticated socket and run the handshake on it. */
   accept(socket: WebSocket, accountId: number, deviceId: number | null, accountName: string): void {
@@ -96,9 +121,16 @@ export class AgentRegistry extends EventEmitter {
           return;
         }
         // A 1.0 server has no instanceId; it is a new machine every dial-in.
-        id = message.agent.instanceId ?? `anon-${nextAnonymousId++}`;
+        const proposedId = message.agent.instanceId ?? `anon-${randomUUID()}`;
+        const known = this.agents.get(proposedId);
+        if (known && (known.accountId !== accountId || known.deviceId !== deviceId)) {
+          this.send(socket, { type: 'refuse', reason: 'unauthorized' });
+          socket.close();
+          return;
+        }
+        id = proposedId;
+        this.validations.delete(id);
         this.sockets.set(id, socket);
-        const known = this.agents.get(id);
         this.agents.set(id, {
           id,
           accountId,
@@ -117,7 +149,7 @@ export class AgentRegistry extends EventEmitter {
         return;
       }
 
-      this.handle(id, accountId, message);
+      if (this.sockets.get(id) === socket) this.handle(id, accountId, message);
     });
 
     socket.on('close', () => {
@@ -125,6 +157,7 @@ export class AgentRegistry extends EventEmitter {
       // A newer socket for the same server may already have taken over.
       if (this.sockets.get(id) !== socket) return;
       this.sockets.delete(id);
+      this.validations.delete(id);
       for (const [requestId, request] of this.requests) {
         if (request.agentId === id) this.requests.delete(requestId);
       }
@@ -146,6 +179,37 @@ export class AgentRegistry extends EventEmitter {
     if (agent) agent.lastSeen = Date.now();
 
     switch (message.type) {
+      case 'inventory-changed': {
+        if (agent) this.validateInventory(agent);
+        return;
+      }
+      case 'validation': {
+        const pending = this.validations.get(agentId);
+        if (!agent || !pending || pending.id !== message.id
+          || pending.expiresAt < Date.now()
+          || pending.tmuxServer !== message.tmuxServer
+          || agent.identity.tmuxServer !== message.tmuxServer
+          || message.missing.some(target => !pending.targets.has(target))) return;
+        this.validations.delete(agentId);
+        const missing = new Set(message.missing);
+        if (missing.size === 0) return;
+        for (const entry of this.store.listPool(accountId)) {
+          if (entry.host === agent.identity.host && entry.tmuxServer === message.tmuxServer
+            && missing.has(entry.pattern)) this.store.removePoolEntry(accountId, entry.id);
+        }
+        for (const [id, holder] of this.agents) {
+          if (holder.accountId !== accountId || holder.identity.host !== agent.identity.host
+            || holder.identity.tmuxServer !== message.tmuxServer) continue;
+          holder.grants = holder.grants.filter(grant => !missing.has(grant.target));
+          for (const target of missing) {
+            holder.revoked.delete(target);
+            holder.activity.delete(target);
+          }
+          if (!holder.connected && holder.grants.length === 0 && holder.revoked.size === 0) this.agents.delete(id);
+        }
+        this.emit('change', accountId);
+        return;
+      }
       case 'request': {
         this.requests.set(message.id, {
           id: message.id,
@@ -212,6 +276,28 @@ export class AgentRegistry extends EventEmitter {
       default:
         return;
     }
+  }
+
+  /** Validate only ids already known here, so a late snapshot cannot erase a new pane. */
+  private validateInventory(agent: ConnectedAgent): void {
+    const tmuxServer = agent.identity.tmuxServer;
+    const socket = this.sockets.get(agent.id);
+    if (!tmuxServer || !socket) return;
+    const targets = new Set<string>();
+    for (const entry of this.store.listPool(agent.accountId)) {
+      if (entry.host === agent.identity.host && entry.tmuxServer === tmuxServer
+        && /^[%@]\d+$/.test(entry.pattern)) targets.add(entry.pattern);
+    }
+    for (const holder of this.agents.values()) {
+      if (holder.accountId !== agent.accountId || holder.identity.host !== agent.identity.host
+        || holder.identity.tmuxServer !== tmuxServer) continue;
+      for (const grant of holder.grants) targets.add(grant.target);
+      for (const target of holder.revoked.keys()) targets.add(target);
+    }
+    if (targets.size === 0) return;
+    const id = randomUUID();
+    this.validations.set(agent.id, { id, tmuxServer, targets, expiresAt: Date.now() + 10_000 });
+    this.send(socket, { type: 'validate', id, tmuxServer, targets: [...targets] });
   }
 
   /**
@@ -285,9 +371,9 @@ export class AgentRegistry extends EventEmitter {
     if (!agent.grants.some(grant => grant.target === target)) return false;
     agent.revoked.set(target, Date.now());
     agent.grants = agent.grants.filter(grant => grant.target !== target);
+    this.emit('change', accountId);
     const socket = this.sockets.get(agentId);
     if (socket) this.send(socket, { type: 'revoke', target });
-    this.emit('change', accountId);
     return true;
   }
 

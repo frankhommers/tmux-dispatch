@@ -77,8 +77,8 @@ export function RequestCard({ request, onChanged }: { request: PaneRequest; onCh
   };
 
   return (
-    <Card className="animate-in fade-in slide-in-from-bottom-2 overflow-hidden border-border/60 shadow-lg shadow-black/5 duration-500">
-      <CardHeader className="gap-1">
+    <Card className="animate-in fade-in slide-in-from-bottom-2 overflow-hidden border-border border-l-4 border-l-live shadow-sm duration-500">
+      <CardHeader className="gap-2">
         <div className="flex flex-wrap items-center gap-2">
           <Badge variant="secondary" className="font-mono text-[11px]">{request.kind}</Badge>
           <span className="font-mono text-xs text-muted-foreground">{request.id}</span>
@@ -87,17 +87,18 @@ export function RequestCard({ request, onChanged }: { request: PaneRequest; onCh
             <span className="flex items-center gap-1 text-xs text-muted-foreground">
               <Cpu className="size-3" />
               {request.agent.host}
-              <span className="opacity-60">· scope {request.agent.scope}</span>
+              <span className="text-muted-foreground">· scope {request.agent.scope}</span>
             </span>
           )}
         </div>
         <p className="text-balance text-lg font-semibold leading-snug">{request.reason}</p>
         {request.agent?.cwd && (
-          <p className="font-mono text-xs text-muted-foreground">{request.agent.cwd}</p>
+          <p className="break-all font-mono text-xs text-muted-foreground">{request.agent.cwd}</p>
         )}
       </CardHeader>
 
       <CardContent>
+        <p className="mb-3 text-sm font-medium">Available {request.kind === 'window' ? 'windows' : 'panes'}</p>
         {request.lastError && (
           <p className="mb-3 flex items-start gap-2 rounded-lg border border-destructive/40 bg-destructive/10 px-3 py-2 text-sm">
             <AlertTriangle className="mt-0.5 size-4 shrink-0" />
@@ -129,7 +130,7 @@ export function RequestCard({ request, onChanged }: { request: PaneRequest; onCh
         )}
       </CardContent>
 
-      <CardFooter className="justify-between gap-3 border-t border-border/60 !py-3">
+      <CardFooter className="flex-wrap justify-between gap-3 border-t border-border !py-3">
         <form
           className="flex items-center gap-2"
           onSubmit={event => {
@@ -148,7 +149,7 @@ export function RequestCard({ request, onChanged }: { request: PaneRequest; onCh
           {/* Not disabled while empty: a disabled submit button also blocks
               pressing Enter in the field, and an empty submit is already a no-op. */}
           <Button type="submit" size="sm" variant="secondary" disabled={busy}>
-            Assign
+            Assign by ID
           </Button>
         </form>
         <div className="flex items-center gap-1">

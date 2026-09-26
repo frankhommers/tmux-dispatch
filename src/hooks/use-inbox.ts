@@ -35,7 +35,11 @@ export function useInbox(enabled: boolean) {
 
     const query = token ? `?t=${encodeURIComponent(token)}` : '';
     const events = new EventSource(`/events${query}`);
-    events.addEventListener('open', () => setConnection('live'));
+    events.addEventListener('open', () => {
+      setConnection('live');
+      // Changes during a dropped stream are not replayed by the server.
+      void refresh();
+    });
     events.addEventListener('error', () => setConnection('offline'));
     events.addEventListener('change', () => void refresh());
     events.addEventListener('request', event => {

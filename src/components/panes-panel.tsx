@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useState } from 'react';
-import { Pin, Plus, TerminalSquare, Undo2, X } from 'lucide-react';
+import { Ellipsis, Pin, Plus, TerminalSquare, Undo2 } from 'lucide-react';
+import { DropdownMenu } from 'radix-ui';
 import { toast } from 'sonner';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader } from '@/components/ui/card';
@@ -96,10 +97,9 @@ function group(agents: ConnectedAgent[], pool: PoolEntry[]): Group[] {
   return [...groups.values()]
     .map(g => ({
       ...g,
-      // Live first, then the most recently touched.
+      // Keep rows stable when an agent briefly connects to report activity.
       rows: [...g.rows].sort((a, b) =>
-        Number(Boolean(b.agent?.connected)) - Number(Boolean(a.agent?.connected))
-        || a.target.localeCompare(b.target, undefined, { numeric: true })),
+        a.target.localeCompare(b.target, undefined, { numeric: true })),
     }))
     // Real projects in alphabetical order; the catch-all last.
     .sort((a, b) => Number(a.cwd === null) - Number(b.cwd === null) || a.label.localeCompare(b.label));
@@ -108,8 +108,8 @@ function group(agents: ConnectedAgent[], pool: PoolEntry[]): Group[] {
 /** What the row is doing, in the order a human would want to hear it. */
 function activityOf(row: Row): string {
   const acted = row.grant?.lastActivity ?? row.rule?.lastActivity ?? null;
-  if (acted) return `active ${ago(acted)}`;
-  if (row.grant) return `since ${ago(row.grant.since)}`;
+  if (acted) return `used ${ago(acted)}`;
+  if (row.grant) return `assigned ${ago(row.grant.since)}`;
   // Nobody is holding it, so the last thing that happened is the rule firing.
   if (row.rule?.usedAt) return `handed over ${ago(row.rule.usedAt)}`;
   return 'not used yet';
@@ -184,45 +184,52 @@ export function PanesPanel({ agents, onChanged }: Props) {
 
   const groups = group(agents, pool);
   const panes = groups.reduce((total, g) => total + g.rows.length, 0);
-  const manyHosts = new Set(agents.map(agent => agent.identity.host)).size > 1;
 
   return (
-    <Card className="border-border/60">
+    <Card className="border-border">
       <CardHeader className="gap-1">
         <div className="flex items-center gap-2">
           <TerminalSquare className="size-4 text-muted-foreground" />
-          <h2 className="text-sm font-semibold">Panes</h2>
+          <h2 className="text-lg font-semibold">Pane access</h2>
           <span className="flex-1" />
           <span className="text-xs text-muted-foreground">
-            {panes} pane{panes === 1 ? '' : 's'}
+            {panes} {panes === 1 ? 'entry' : 'entries'}
           </span>
         </div>
+        <p className="text-sm text-muted-foreground">See who has access. Pin a pane to assign it automatically next time.</p>
       </CardHeader>
 
       <CardContent className="flex flex-col gap-4">
         {panes === 0 ? (
           <p className="text-sm text-muted-foreground">Nothing handed out.</p>
         ) : (
-          <table className="w-full border-separate border-spacing-0 text-sm">
+          <div>
+            <p className="mb-2 text-xs text-muted-foreground xl:hidden">Scroll the table horizontally to see all columns.</p>
+            <div role="region" aria-label="Pane access table" tabIndex={0} className="overflow-x-auto rounded-lg border border-border focus-visible:outline-2 focus-visible:outline-ring">
+              <table className="w-full min-w-[800px] border-collapse text-sm">
+            <caption className="sr-only">Assigned panes and automatic assignment rules, grouped by project</caption>
             <thead>
-              <tr className="text-xs font-medium tracking-wide text-muted-foreground uppercase">
-                <th className="w-14 pb-2 pr-3 text-left font-medium">Kept</th>
-                <th className="pb-2 pr-6 text-left font-medium">Pane</th>
-                <th className="w-full pb-2 pr-4 text-left font-medium">Agent</th>
-                <th className="pb-2 text-right font-medium whitespace-nowrap">Last activity</th>
-                <th className="pb-2" />
+              <tr className="bg-muted text-xs font-semibold tracking-wide text-foreground uppercase">
+                <th scope="col" className="px-4 py-3 text-left">Pane / rule</th>
+                <th scope="col" className="px-4 py-3 text-left">Agent / machine</th>
+                <th scope="col" className="px-4 py-3 text-left">Auto-assign</th>
+                <th scope="col" className="px-4 py-3 text-left whitespace-nowrap">Last activity</th>
+                <th scope="col" className="w-px px-4 py-3 text-left">Actions</th>
               </tr>
             </thead>
 
             {groups.map(({ cwd, label, rows }) => (
-              <tbody key={label}>
+              <tbody key={cwd ?? 'all-projects'}>
                 <tr>
                   <th
                     colSpan={5}
+                    scope="rowgroup"
                     title={cwd ?? 'Rules that are not tied to a directory'}
-                    className="pt-4 pb-1 text-left text-sm font-semibold"
+                    className="border-y border-border bg-background px-4 py-2.5 text-left text-sm font-semibold"
                   >
-                    <span className={cn(!cwd && 'font-normal text-muted-foreground italic')}>{label}</span>
+                    <span>{label}</span>
+                    <span className="ml-3 font-normal text-muted-foreground">{rows.length} {rows.length === 1 ? 'entry' : 'entries'}</span>
+                    {cwd && <span className="ml-4 font-mono text-xs font-normal text-muted-foreground">{cwd}</span>}
                   </th>
                 </tr>
 
@@ -230,82 +237,54 @@ export function PanesPanel({ agents, onChanged }: Props) {
                   <tr
                     key={row.key}
                     className={cn(
-                      'border-t border-border/60 transition hover:bg-accent/40',
+                      'border-t border-border even:bg-muted/25 transition-colors hover:bg-accent',
                       busy === row.key && 'pointer-events-none opacity-50'
                     )}
                   >
-                    <td className="py-3 pr-3">
+                    <td className="px-4 py-4">
+                      <div className="flex items-center gap-2">
+                        <span className="break-all font-mono font-semibold tabular-nums">{row.target}</span>
+                        {row.command && <span className="rounded border border-border bg-muted px-1.5 py-0.5 font-mono text-xs">{row.command}</span>}
+                      </div>
+                      {row.location && <p className="mt-1 text-xs text-muted-foreground">{row.location}</p>}
+                    </td>
+
+                    <td className="px-4 py-4">
+                      {row.agent ? (
+                        <>
+                          <p className="font-medium">{row.agent.identity.mcpClient ?? 'Agent'}</p>
+                          <p className="mt-1 text-xs text-muted-foreground">{row.agent.identity.host}</p>
+                        </>
+                      ) : <span className="text-muted-foreground">Not assigned</span>}
+                    </td>
+
+                    <td className="px-4 py-4">
                       <button
                         type="button"
+                        disabled={busy === row.key}
                         aria-pressed={Boolean(row.rule)}
-                        className={cn(
-                          'group grid size-8 place-items-center rounded-full transition',
-                          row.rule
-                            ? 'bg-live/15 text-live ring-1 ring-live/30 hover:bg-destructive/15 hover:text-destructive hover:ring-destructive/30'
-                            : 'text-muted-foreground/50 hover:bg-accent hover:text-foreground'
-                        )}
-                        aria-label={row.rule
-                          ? `Stop keeping ${row.target}`
-                          : `Keep ${row.target} for ${label}`}
-                        title={row.rule
-                          ? 'Kept. Press to let it go.'
-                          : 'Handed over once. Press to keep it for this project.'}
+                        className={cn('inline-flex h-8 items-center gap-2 rounded-md border px-2.5 text-xs font-medium outline-none transition-colors focus-visible:ring-2 focus-visible:ring-ring', row.rule ? 'border-live/40 bg-live/10 text-live hover:bg-live/20' : 'border-border text-muted-foreground hover:bg-accent hover:text-foreground')}
+                        aria-label={row.rule ? `Stop keeping ${row.target}` : `Keep ${row.target} for ${label}`}
+                        title={row.rule ? 'Automatically assigned. Click to disable.' : 'Assigned once. Click to assign automatically next time.'}
                         onClick={() => void togglePin(row)}
                       >
-                        <Pin
-                          className={cn(
-                            'size-4 transition',
-                            row.rule && 'fill-current group-hover:rotate-45'
-                          )}
-                        />
+                        <Pin className={cn('size-3.5', row.rule && 'fill-current')} />
+                        {row.rule ? 'On' : 'Off'}
                       </button>
                     </td>
 
-                    <td className="py-3 pr-6">
-                      <span className="flex items-center gap-2">
-                        {namesAPane(row.target) && (
-                          <span
-                            className={cn(
-                              'size-2 shrink-0 rounded-full',
-                              row.agent?.connected ? 'bg-live' : 'bg-muted-foreground/40'
-                            )}
-                            title={row.agent?.connected ? 'Held right now' : 'Nobody is holding it'}
-                          />
-                        )}
-                        <span className="font-mono font-medium tabular-nums">{row.target}</span>
-                        {row.command && (
-                          <span className="rounded-md bg-muted px-1.5 py-0.5 font-mono text-xs text-muted-foreground">
-                            {row.command}
-                          </span>
-                        )}
-                      </span>
-                    </td>
-
-                    <td className="w-full max-w-0 py-3 pr-4 text-muted-foreground">
-                      {row.agent ? (
-                        <span className="block truncate">
-                          <span className="text-foreground">
-                            {row.agent.identity.mcpClient ?? 'agent'}
-                          </span>
-                          {row.location && ` · ${row.location}`}
-                          {manyHosts && ` · ${row.agent.identity.host}`}
-                          {!row.agent.connected && ` · seen ${ago(row.agent.lastSeen)}`}
-                        </span>
-                      ) : (
-                        <span className="text-muted-foreground/60">—</span>
-                      )}
-                    </td>
-
-                    <td className="py-3 text-right text-muted-foreground tabular-nums whitespace-nowrap">
+                    <td className="px-4 py-4 text-muted-foreground tabular-nums whitespace-nowrap">
                       {activityOf(row)}
                     </td>
 
-                    <td className="py-3 whitespace-nowrap">
-                      <span className="flex items-center justify-end">
+                    <td className="px-4 py-4 whitespace-nowrap">
+                      <div className="grid grid-cols-[6rem_2rem] items-center gap-2">
                         {row.grant && (
                           <Button
                             size="sm"
-                            variant="ghost"
+                            variant="outline"
+                            className="col-start-1 row-start-1"
+                            disabled={busy === row.key}
                             aria-label={`Revoke ${row.target}`}
                             title="Take this pane back"
                             onClick={() => void revoke(row)}
@@ -315,28 +294,50 @@ export function PanesPanel({ agents, onChanged }: Props) {
                           </Button>
                         )}
                         {row.agent && !row.agent.connected && (
-                          <Button
-                            size="sm"
-                            variant="ghost"
-                            className="px-1.5"
-                            aria-label={`Forget ${row.agent.identity.mcpClient ?? 'agent'}`}
-                            title="Forget this agent. What you revoked stays revoked."
-                            onClick={() => void forget(row)}
-                          >
-                            <X className="size-3.5" />
-                          </Button>
+                          <DropdownMenu.Root>
+                            <DropdownMenu.Trigger asChild>
+                              <Button
+                                size="icon-sm"
+                                variant="ghost"
+                                className="col-start-2 row-start-1 text-muted-foreground"
+                                disabled={busy === row.key}
+                                aria-label={`More actions for ${row.target}`}
+                              >
+                                <Ellipsis className="size-4" />
+                              </Button>
+                            </DropdownMenu.Trigger>
+                            <DropdownMenu.Portal>
+                              <DropdownMenu.Content
+                                align="end"
+                                sideOffset={4}
+                                className="z-50 w-64 rounded-md border border-border bg-popover p-1 text-popover-foreground shadow-md"
+                              >
+                                <DropdownMenu.Label className="px-2 py-1.5 text-xs font-normal text-muted-foreground">
+                                  Remove this offline agent’s {row.agent.grants.length} {row.agent.grants.length === 1 ? 'assignment' : 'assignments'} from the overview. Access is not revoked.
+                                </DropdownMenu.Label>
+                                <DropdownMenu.Item
+                                  className="cursor-pointer rounded-sm px-2 py-1.5 text-sm outline-none focus:bg-accent focus:text-accent-foreground"
+                                  onSelect={() => void forget(row)}
+                                >
+                                  Forget agent
+                                </DropdownMenu.Item>
+                              </DropdownMenu.Content>
+                            </DropdownMenu.Portal>
+                          </DropdownMenu.Root>
                         )}
-                      </span>
+                      </div>
                     </td>
                   </tr>
                 ))}
               </tbody>
             ))}
-          </table>
+              </table>
+            </div>
+          </div>
         )}
 
         <form
-          className="flex flex-wrap items-center gap-2 border-t border-border/60 pt-3"
+          className="flex flex-wrap items-center gap-2 border-t border-border pt-3"
           onSubmit={async event => {
             event.preventDefault();
             if (!pattern.trim()) return;
@@ -349,7 +350,9 @@ export function PanesPanel({ agents, onChanged }: Props) {
             }
           }}
         >
+          <label htmlFor="pane-pattern" className="w-full text-sm font-medium">Automatically assign a pane</label>
           <input
+            id="pane-pattern"
             value={pattern}
             onChange={event => setPattern(event.target.value)}
             placeholder="%3, or a pattern like *agents:*"
@@ -357,7 +360,7 @@ export function PanesPanel({ agents, onChanged }: Props) {
           />
           <Button type="submit" size="sm" variant="secondary">
             <Plus className="size-3.5" />
-            Keep
+            Add rule
           </Button>
           <p className="w-full text-xs text-muted-foreground">
             <code className="font-mono">%3</code> is one pane. Anything else is matched

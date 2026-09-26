@@ -15,8 +15,8 @@ export function LinkDevice() {
   const [done, setDone] = useState(false);
 
   return (
-    <div className="aurora flex min-h-dvh items-center justify-center p-6">
-      <Card className="w-full max-w-sm border-border/60 shadow-xl shadow-black/10">
+    <div className="flex min-h-dvh items-center justify-center p-6">
+      <Card className="w-full max-w-sm border-border shadow-sm">
         <CardHeader className="gap-1">
           <div className="flex items-center gap-2">
             <Link2 className="size-4" />

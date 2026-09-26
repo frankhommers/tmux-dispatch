@@ -1,8 +1,19 @@
 # tmux-dispatch
 
+[![Container build](https://github.com/frankhommers/tmux-dispatch/actions/workflows/container.yml/badge.svg)](https://github.com/frankhommers/tmux-dispatch/actions/workflows/container.yml)
+[![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
+
 The dispatch service for [tmux-mcp](https://github.com/frankhommers/tmux-mcp): a web
 service where a human answers an agent's request for a tmux pane, from a
 laptop or a phone.
+
+Approve or deny requests, pin panes for automatic assignment, revoke access,
+and manage paired machines. Accounts and assignments persist in SQLite.
+Confirmed closed panes are automatically removed from the inventory.
+
+**Companion project:** [tmux-mcp](https://github.com/frankhommers/tmux-mcp)
+runs on each machine with tmux. Install and configure it there; tmux-dispatch
+provides the browser inbox and can run anywhere Docker runs.
 
 ## How it fits together
 
@@ -34,17 +45,26 @@ hosted deployment without opening a port, and nothing on it listens.
 
 ## Running it
 
+The public image is `ghcr.io/frankhommers/tmux-dispatch:latest`, for
+`linux/amd64` and `linux/arm64`. Docker selects the matching architecture.
+
 ```bash
+git clone https://github.com/frankhommers/tmux-dispatch.git
+cd tmux-dispatch
+cp .env.example .env
+chmod 600 .env
+```
+
+Edit `.env`: choose an `ADMIN_PASSWORD` of at least 12 characters and set
+`SESSION_SECRET` to the output of `openssl rand -hex 32`. Then start it:
+
+```bash
+docker compose pull
 docker compose up -d
 ```
 
-Compose passes the settings through from your environment or an `.env` file
-beside it, so nothing has to be edited into the file:
-
-```bash
-ADMIN_PASSWORD='at-least-twelve' SESSION_SECRET="$(openssl rand -hex 32)" \
-  docker compose up -d
-```
+Open [http://127.0.0.1:7676](http://127.0.0.1:7676) and sign in. The named
+volume keeps state across updates. No tmux socket or Docker socket is mounted.
 
 Sign-in is chosen by what you configure:
 
@@ -85,8 +105,19 @@ docker compose up -d
 after a crash or a reboot — but only once the Docker daemon is running, so on
 a desktop install enable *Start Docker Desktop when you sign in* as well.
 
-The `/data` volume holds the accounts, the paired devices and the pool, so all
-of that survives a restart. Pairing is therefore a one-time step per machine.
+The `/data` volume holds accounts, paired devices, auto-assign rules, reported
+pane assignments, last activity and pending revocations. These survive a
+container restart or image rebuild. Changes are written immediately to SQLite,
+not only at shutdown. Restored agents start disconnected until they check in;
+a revoked pane stays revoked when its agent returns.
+
+Pending requests belong to their live connection and are not restored. Agents
+with no assignments or pending revocations are not retained. Removing a machine,
+forgetting an agent, or detecting a replaced tmux server still cleans up its
+entries. Data already lost by an older version cannot be recovered; an agent's
+next report repopulates its assignments. Pairing is a one-time step per machine.
+Keep the named volume when redeploying (`docker compose pull && docker compose up -d`); deleting
+the volume also deletes this state.
 
 ## Connecting a machine
 
@@ -114,7 +145,7 @@ has: a service that is down must not silently take panes away.
 Machines that are gone leave the list by themselves when that can be proven: a
 tmux server restarted on the same socket takes the machines of the old one with
 it, and a pane a newer agent reports holding is no longer shown with a vanished
-one. Anything else can be forgotten with ×; what you revoked from it stays
+one. Anything else can be forgotten from the pane's actions menu; what you revoked from it stays
 revoked, in case it was only asleep.
 
 A candidate another agent already holds on the same tmux server is marked as
@@ -135,6 +166,12 @@ rule: agents working in the same directory get it back without asking. Such a
 rule is bound to that directory and to the tmux server the id belongs to, so a
 restarted tmux makes it fall silent rather than hand out a pane that now means
 something else.
+
+With protocol 1.6 on both sides, active MCP servers also validate saved pane and
+window ids after tmux changes and every 30 seconds. A confirmed missing id
+removes its pin rules and old assignments from this account, machine and tmux
+server. Pattern rules remain. A disconnected agent or an unreachable tmux server
+does not prove that a pane is gone: cleanup waits for a successful live check.
 
 ## What this service can and cannot do
 
@@ -157,9 +194,40 @@ the MCP server falls back to its requests directory.
 ## Development
 
 ```bash
-npm install
+npm ci
 npm run dev         # the React app, proxying /api and /events to a running service
 npm run dev:server  # the service, with reload
 npm test            # the service's tests
 npm run build       # app into dist/, service into server-dist/
 ```
+
+Use Node.js 24 or newer. To build and run your checkout in Docker:
+
+```bash
+docker build -t tmux-dispatch:local .
+TMUX_DISPATCH_IMAGE=tmux-dispatch:local docker compose up -d --pull never
+```
+
+See [CONTRIBUTING.md](CONTRIBUTING.md) for changes and bug reports.
+
+## Container releases
+
+[GitHub Actions](https://github.com/frankhommers/tmux-dispatch/actions/workflows/container.yml)
+runs the application build and tests before building the container:
+
+- `main` publishes `latest` and `sha-<full commit SHA>`.
+- A tag such as `v1.2.3` publishes `1.2.3`, `1.2`, and its commit tag.
+- Pull requests build both architectures without publishing.
+
+Images include source and license labels, build provenance and an SBOM.
+Set `TMUX_DISPATCH_IMAGE` in `.env` to a version tag or digest to pin a deployment.
+`latest` follows `main`; pushing a version tag does not move it.
+
+## Related projects and license
+
+- [frankhommers/tmux-mcp](https://github.com/frankhommers/tmux-mcp): the companion
+  MCP server with human-approved pane access and dispatch support.
+- [nickgnd/tmux-mcp](https://github.com/nickgnd/tmux-mcp): Nicolò Gnudi's original
+  tmux MCP server, from which the companion project is forked.
+
+tmux-dispatch is open source under the [MIT license](LICENSE).

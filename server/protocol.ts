@@ -6,7 +6,7 @@
  * independently anyway. PROTOCOL_VERSION is what keeps them honest.
  */
 
-export const PROTOCOL_VERSION = '1.5';
+export const PROTOCOL_VERSION = '1.6';
 
 export function protocolMajor(version: string): string {
   return version.split('.')[0] ?? '';
@@ -68,6 +68,8 @@ export type ServerToDispatch =
   | { type: 'result'; id: string; ok: true; target: string }
   | { type: 'result'; id: string; ok: false; error: string }
   | { type: 'grants'; grants: WireGrant[] }
+  | { type: 'inventory-changed' }
+  | { type: 'validation'; id: string; tmuxServer: string; missing: string[] }
   | { type: 'check'; id: string; target: string };
 
 export type DispatchToServer =
@@ -77,6 +79,7 @@ export type DispatchToServer =
   | { type: 'answer'; id: string; deny: true; reason?: string }
   | { type: 'refresh'; id: string }
   | { type: 'revoke'; target: string }
+  | { type: 'validate'; id: string; tmuxServer: string; targets: string[] }
   | { type: 'verdict'; id: string; allowed: boolean };
 
 /** Parse defensively: the peer may be a different version. */
@@ -90,6 +93,15 @@ export function parseAgentMessage(raw: string): ServerToDispatch | null {
   if (typeof value !== 'object' || value === null) return null;
   const message = value as { type?: unknown; id?: unknown };
   switch (message.type) {
+    case 'inventory-changed':
+      return value as ServerToDispatch;
+    case 'validation': {
+      const frame = value as { tmuxServer?: unknown; missing?: unknown };
+      return typeof message.id === 'string' && typeof frame.tmuxServer === 'string'
+        && frame.tmuxServer.length > 0 && Array.isArray(frame.missing)
+        && frame.missing.every(target => typeof target === 'string' && /^[%@]\d+$/.test(target))
+        ? value as ServerToDispatch : null;
+    }
     case 'hello':
       return message as ServerToDispatch;
     case 'grants':

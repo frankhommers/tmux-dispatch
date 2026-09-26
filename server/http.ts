@@ -88,7 +88,7 @@ async function serveStatic(pathname: string, res: ServerResponse): Promise<void>
 
 export async function startService(config: Config): Promise<Service> {
   const store = new Store(config.databasePath);
-  const agents = new AgentRegistry();
+  const agents = new AgentRegistry(store);
 
   // A tmux server that restarted takes the meaning of its ids with it, so the
   // standing rules naming one are swept with the sessions that held them.
@@ -549,8 +549,11 @@ export async function startService(config: Config): Promise<Service> {
     agents,
     close: async () => {
       for (const socket of openSockets) socket.destroy();
-      wss.close();
-      await new Promise<void>(resolve => server.close(() => resolve()));
+      // Socket close handlers persist state, so finish them before closing SQLite.
+      await Promise.all([
+        new Promise<void>(resolve => wss.close(() => resolve())),
+        new Promise<void>(resolve => server.close(() => resolve())),
+      ]);
       store.close();
     },
   };

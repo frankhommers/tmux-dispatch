@@ -1,13 +1,27 @@
 import { DatabaseSync } from 'node:sqlite';
 import { createHash, randomBytes } from 'node:crypto';
+import type { AgentIdentity, WireGrant } from './protocol.js';
 
 /**
- * Persistent state: accounts, paired devices and the pre-assign pool.
+ * Persistent state: accounts, paired devices, the pre-assign pool and agent grants.
  *
  * Pending requests are deliberately not here — they belong to an open socket
  * and must not outlive it. node:sqlite keeps this dependency-free, so the
  * image needs no compiler.
  */
+
+/** Durable agent state. Sockets and pending requests are never restored. */
+export interface SavedAgent {
+  id: string;
+  accountId: number;
+  deviceId: number | null;
+  identity: AgentIdentity;
+  connectedAt: number;
+  lastSeen: number;
+  grants: WireGrant[];
+  revoked: Array<[string, number]>;
+  activity: Array<[string, number]>;
+}
 
 export interface Account {
   id: number;
@@ -74,6 +88,12 @@ export class Store {
         created_at INTEGER NOT NULL,
         last_seen_at INTEGER
       );
+      CREATE TABLE IF NOT EXISTS agent_state (
+        account_id INTEGER NOT NULL REFERENCES accounts(id) ON DELETE CASCADE,
+        agent_id TEXT NOT NULL,
+        state TEXT NOT NULL,
+        PRIMARY KEY (account_id, agent_id)
+      );
       CREATE TABLE IF NOT EXISTS pool (
         id INTEGER PRIMARY KEY,
         account_id INTEGER NOT NULL REFERENCES accounts(id) ON DELETE CASCADE,
@@ -119,6 +139,31 @@ export class Store {
 
   close(): void {
     this.db.close();
+  }
+
+  loadAgents(): SavedAgent[] {
+    const rows = this.db.prepare('SELECT state FROM agent_state').all() as Array<{ state: string }>;
+    const deviceExists = this.db.prepare('SELECT id FROM devices WHERE id = ? AND account_id = ?');
+    return rows.map(row => JSON.parse(row.state) as SavedAgent).filter(agent =>
+      this.accountById(agent.accountId) !== null
+      && (agent.deviceId === null || deviceExists.get(agent.deviceId, agent.accountId) !== undefined));
+  }
+
+  /** Commit a whole account atomically, including removals and hidden revocations. */
+  saveAgents(accountId: number, agents: SavedAgent[]): void {
+    this.db.exec('BEGIN IMMEDIATE');
+    try {
+      this.db.prepare('DELETE FROM agent_state WHERE account_id = ?').run(accountId);
+      const insert = this.db.prepare('INSERT INTO agent_state (account_id, agent_id, state) VALUES (?, ?, ?)');
+      for (const agent of agents) {
+        if (agent.accountId !== accountId) throw new Error('Agent account mismatch');
+        insert.run(accountId, agent.id, JSON.stringify(agent));
+      }
+      this.db.exec('COMMIT');
+    } catch (error) {
+      this.db.exec('ROLLBACK');
+      throw error;
+    }
   }
 
   /** The account for an identity, created on first sight. */

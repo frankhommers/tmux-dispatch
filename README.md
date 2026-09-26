@@ -121,11 +121,15 @@ the volume also deletes this state.
 
 ## Connecting a machine
 
+Dispatch support currently lives on tmux-mcp's
+[`feat/dispatch-inbox` branch](https://github.com/frankhommers/tmux-mcp/tree/feat/dispatch-inbox).
+Until it is merged into its default branch, use that version on your tmux host:
+
 ```bash
-tmux-mcp dispatch-login --url https://tmux.example.com
+npx --prefer-online -y github:frankhommers/tmux-mcp#feat/dispatch-inbox dispatch-login --url https://tmux.example.com
 # Open https://tmux.example.com/link and enter: WQ7F-2K9P
 
-tmux-mcp --human-assigned --dispatch-url wss://tmux.example.com/agent
+npx --prefer-online -y github:frankhommers/tmux-mcp#feat/dispatch-inbox --human-assigned --dispatch-url wss://tmux.example.com/agent
 ```
 
 Pairing is a device-code flow, so no secret is ever pasted by hand. Devices

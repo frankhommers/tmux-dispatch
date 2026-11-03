@@ -177,6 +177,20 @@ rule is bound to that directory and to the tmux server the id belongs to, so a
 restarted tmux makes it fall silent rather than hand out a pane that now means
 something else.
 
+Several agents can work in the same directory, for instance two sessions of
+one editor. When tmux-mcp reports a session id (configured there with
+`--session-id-env=<VAR>` or `--session-id=<value>`), each agent shows up with its own session, and "Keep" binds the rule to
+that session instead of the path, so it follows the session and nobody else
+collects it. Either way, a rule never hands out a pane another live agent
+still holds: the human is asked instead.
+
+A rule is a set of elements: pane, session, path, machine, and tmux server.
+Each element either must match or matches anything, and you choose per
+element: click the chips on a rule to flip one, or use the form to write a
+rule out in full. All bound elements must hold at once. Clone copies an
+existing rule into the form, for instance to give a second session the same
+pane setup with one field changed.
+
 With protocol 1.6 on both sides, active MCP servers also validate saved pane and
 window ids after tmux changes and every 30 seconds. A confirmed missing id
 removes its pin rules and old assignments from this account, machine and tmux

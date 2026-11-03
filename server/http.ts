@@ -133,7 +133,9 @@ export async function startService(config: Config): Promise<Service> {
     const match = findPoolMatch(store.listPool(accountId), request.candidates, request.kind, {
       cwd: identity?.cwd ?? '',
       tmuxServer: identity?.tmuxServer ?? '',
-    });
+      host: identity?.host,
+      sessionId: identity?.sessionId,
+    }, agents.heldByOthers(accountId, request.id));
     if (!match) {
       broadcast(accountId, 'request', { id: request.id, reason: request.reason });
       return;
@@ -342,11 +344,16 @@ export async function startService(config: Config): Promise<Service> {
         sendJson(res, 404, { error: `${target || 'that target'} is not held by this machine` });
         return;
       }
-      // Bound to where the agent works and to the tmux server the id belongs
-      // to, so the rule cannot outlive the meaning of what it names.
+      // Bound to the agent's session when it named one (the path stays free,
+      // so the session may move to a worktree), else to where it works; and
+      // always to the machine and the tmux server the id belongs to, so the
+      // rule cannot outlive the meaning of what it names. Every element can
+      // be rebound afterwards, one at a time.
       sendJson(res, 200, {
         entry: store.addPoolEntry(accountId, held.grant.target, held.grant.kind, true, {
-          cwd: held.identity.cwd,
+          ...(held.identity.sessionId
+            ? { session: held.identity.sessionId }
+            : { cwd: held.identity.cwd }),
           tmuxServer: held.identity.tmuxServer,
           host: held.identity.host,
         }),
@@ -388,13 +395,48 @@ export async function startService(config: Config): Promise<Service> {
         return;
       }
       const kind = body.kind === 'window' ? 'window' : 'pane';
+      // Each element is the human's choice: a non-empty string binds it,
+      // anything else leaves it matching everything.
+      const element = (value: unknown): string | undefined =>
+        typeof value === 'string' && value.trim() ? value.trim() : undefined;
       sendJson(res, 200, {
-        entry: store.addPoolEntry(accountId, pattern, kind, body.reusable === true),
+        entry: store.addPoolEntry(accountId, pattern, kind, body.reusable === true, {
+          session: element(body.session),
+          cwd: element(body.cwd),
+          tmuxServer: element(body.tmuxServer),
+          host: element(body.host),
+        }),
       });
       return;
     }
 
     const poolMatch = path.match(/^\/api\/pool\/(\d+)$/);
+    if (poolMatch && req.method === 'PATCH') {
+      const body = await readBody(req);
+      const patch: Record<string, unknown> = {};
+      // A string binds the element, null unbinds it; absent fields stay.
+      for (const field of ['session', 'cwd', 'tmuxServer', 'host'] as const) {
+        if (!(field in body)) continue;
+        const value = (body as Record<string, unknown>)[field];
+        if (value === null) patch[field] = null;
+        else if (typeof value === 'string' && value.trim()) patch[field] = value.trim();
+        else {
+          sendJson(res, 400, { error: `${field} must be a non-empty string or null` });
+          return;
+        }
+      }
+      if ('pattern' in body) {
+        if (typeof body.pattern !== 'string' || !body.pattern.trim()) {
+          sendJson(res, 400, { error: 'pattern must be a non-empty string' });
+          return;
+        }
+        patch.pattern = body.pattern.trim();
+      }
+      if ('reusable' in body) patch.reusable = body.reusable === true;
+      const entry = store.updatePoolEntry(accountId, Number(poolMatch[1]), patch);
+      sendJson(res, entry ? 200 : 404, entry ? { entry } : { error: 'no such rule' });
+      return;
+    }
     if (poolMatch && req.method === 'DELETE') {
       sendJson(res, store.removePoolEntry(accountId, Number(poolMatch[1])) ? 200 : 404, { ok: true });
       return;

@@ -71,6 +71,30 @@ export function parseTmuxServer(fingerprint: string | undefined): { socket: stri
   return { socket: parts.slice(0, -2).join(':'), startedAt };
 }
 
+/**
+ * How long a quiet agent still counts as alive. A running tmux-mcp dials in at
+ * least every 30 seconds, so three missed calls mean it is most likely gone.
+ */
+export const LIVENESS_MS = 90_000;
+
+/** Long enough for any UUID or thread name; anything else is not a session id. */
+const MAX_SESSION_ID = 200;
+
+/**
+ * The identity as sent, with the session id checked: it is free text from the
+ * agent's environment, and rules are matched on it.
+ */
+function cleanIdentity(agent: AgentIdentity): AgentIdentity {
+  const { sessionId, ...rest } = agent;
+  const trimmed = typeof sessionId === 'string' ? sessionId.trim().slice(0, MAX_SESSION_ID) : '';
+  return trimmed ? { ...rest, sessionId: trimmed } : rest;
+}
+
+/** Two servers serving one configured agent session are that agent, not two. */
+export function sameSession(a: AgentIdentity, b: AgentIdentity): boolean {
+  return a.sessionId !== undefined && a.sessionId === b.sessionId;
+}
+
 export class AgentRegistry extends EventEmitter {
   private readonly sockets = new Map<string, WebSocket>();
   private readonly agents = new Map<string, ConnectedAgent>();
@@ -135,7 +159,7 @@ export class AgentRegistry extends EventEmitter {
           id,
           accountId,
           deviceId,
-          identity: message.agent,
+          identity: cleanIdentity(message.agent),
           connectedAt: known?.connectedAt ?? Date.now(),
           lastSeen: Date.now(),
           connected: true,
@@ -511,6 +535,29 @@ export class AgentRegistry extends EventEmitter {
           held[grant.target] = agent.identity.cwd;
         }
       }
+    }
+    return held;
+  }
+
+  /**
+   * Targets on the asker's tmux server that another live agent holds, so a rule
+   * never hands one pane to two agents. An agent counts as live while it is
+   * connected or was heard from within LIVENESS_MS: an idle agent hangs up, but
+   * still holds its panes. A server of the same configured session is the same
+   * agent, restarted, and does not count as another.
+   */
+  heldByOthers(accountId: number, id: string, now = Date.now()): Set<string> {
+    const request = this.requests.get(id);
+    const asker = request && this.agents.get(request.agentId);
+    const held = new Set<string>();
+    if (!asker?.identity.tmuxServer) return held;
+
+    for (const agent of this.agents.values()) {
+      if (agent.accountId !== accountId || agent.id === asker.id) continue;
+      if (agent.identity.tmuxServer !== asker.identity.tmuxServer) continue;
+      if (!agent.connected && now - agent.lastSeen > LIVENESS_MS) continue;
+      if (sameSession(agent.identity, asker.identity)) continue;
+      for (const grant of agent.grants) held.add(grant.target);
     }
     return held;
   }

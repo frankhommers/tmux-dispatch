@@ -6,7 +6,7 @@
  * independently anyway. PROTOCOL_VERSION is what keeps them honest.
  */
 
-export const PROTOCOL_VERSION = '1.6';
+export const PROTOCOL_VERSION = '1.7';
 
 export function protocolMajor(version: string): string {
   return version.split('.')[0] ?? '';
@@ -27,6 +27,12 @@ export interface AgentIdentity {
   tmuxServer?: string;
   /** The name the MCP client gave in its `initialize` handshake, verbatim. */
   mcpClient?: string;
+  /**
+   * The agent session this server serves, as its user configured it (1.7).
+   * Opaque. Unlike instanceId it can outlive the process, so a rule may be
+   * bound to it. Absent: the session is unknown, and instanceId stands in.
+   */
+  sessionId?: string;
   pid: number;
   host: string;
   cwd: string;

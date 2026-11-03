@@ -52,6 +52,8 @@ export interface AgentIdentity {
   tmuxServer?: string;
   /** Which MCP client started it, as that client names itself. */
   mcpClient?: string;
+  /** The agent session it serves, when its user configured one. Opaque. */
+  sessionId?: string;
   pid: number;
   host: string;
   cwd: string;
@@ -110,6 +112,8 @@ export interface PoolEntry {
   reusable: boolean;
   /** Only agents working here collect it. Null means anyone. */
   cwd: string | null;
+  /** Only this agent session collects it; `cwd` is then where it was made. */
+  session: string | null;
   /** The tmux server a bare id belongs to; the rule is void on any other. */
   tmuxServer: string | null;
   /** The machine the rule was made on. */
@@ -166,8 +170,30 @@ export const revokeGrant = (agentId: string, target: string) =>
   });
 
 export const listPool = () => api<{ pool: PoolEntry[] }>('/api/pool');
-export const addPoolEntry = (pattern: string, kind: 'pane' | 'window', reusable: boolean) =>
-  api<{ entry: PoolEntry }>('/api/pool', { method: 'POST', body: JSON.stringify({ pattern, kind, reusable }) });
+/** Blank elements are simply not sent: the rule leaves them matching anything. */
+export interface NewPoolEntry {
+  pattern: string;
+  kind: 'pane' | 'window';
+  reusable: boolean;
+  session?: string;
+  cwd?: string;
+  tmuxServer?: string;
+  host?: string;
+}
+export const addPoolEntry = (entry: NewPoolEntry) =>
+  api<{ entry: PoolEntry }>('/api/pool', { method: 'POST', body: JSON.stringify(entry) });
+
+/** Rebind single elements: a string binds, null unbinds, absent stays. */
+export type PoolEntryPatch = Partial<{
+  pattern: string;
+  session: string | null;
+  cwd: string | null;
+  tmuxServer: string | null;
+  host: string | null;
+  reusable: boolean;
+}>;
+export const updatePoolEntry = (id: number, patch: PoolEntryPatch) =>
+  api<{ entry: PoolEntry }>(`/api/pool/${id}`, { method: 'PATCH', body: JSON.stringify(patch) });
 export const removePoolEntry = (id: number) =>
   api<{ ok: true }>(`/api/pool/${id}`, { method: 'DELETE' });
 export const resetPoolEntry = (id: number) =>

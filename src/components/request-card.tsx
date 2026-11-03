@@ -7,6 +7,7 @@ import { Card, CardContent, CardFooter, CardHeader } from '@/components/ui/card'
 import { DenyDialog } from '@/components/deny-dialog';
 import { TargetRow } from '@/components/target-row';
 import { dismissRequest, grant, refreshTargets, type PaneRequest } from '@/lib/api';
+import { shortSession } from '@/lib/format';
 
 function ageLabel(seconds: number): string {
   if (seconds < 60) return `${seconds}s ago`;
@@ -88,6 +89,11 @@ export function RequestCard({ request, onChanged }: { request: PaneRequest; onCh
               <Cpu className="size-3" />
               {request.agent.host}
               <span className="text-muted-foreground">· scope {request.agent.scope}</span>
+              {request.agent.sessionId && (
+                <span className="font-mono text-muted-foreground" title={`Session ${request.agent.sessionId}`}>
+                  · session {shortSession(request.agent.sessionId)}
+                </span>
+              )}
             </span>
           )}
         </div>

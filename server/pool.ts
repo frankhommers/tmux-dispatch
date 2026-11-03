@@ -19,6 +19,10 @@ function globToRegExp(pattern: string): RegExp {
 export interface Asker {
   cwd: string;
   tmuxServer: string;
+  /** The machine the agent runs on. */
+  host?: string;
+  /** The configured agent session, when the agent named one. */
+  sessionId?: string;
 }
 
 export function entryMatches(
@@ -30,8 +34,12 @@ export function entryMatches(
   if (entry.kind !== kind) return false;
   if (entry.usedAt !== null && !entry.reusable) return false;
 
-  // Bound to a directory: only agents working there collect it.
+  // Every bound element must hold at once; an unbound one matches anything.
+  // Which elements bind is the human's per-element choice when keeping or
+  // writing the rule.
+  if (entry.session && entry.session !== asker?.sessionId) return false;
   if (entry.cwd && !globToRegExp(entry.cwd).test(asker?.cwd ?? '')) return false;
+  if (entry.host && entry.host !== asker?.host) return false;
 
   // Bound to a tmux server: a bare id means nothing on any other one, so the
   // rule falls silent and the human is asked again.
@@ -48,15 +56,21 @@ export interface PoolMatchResult {
   candidate: WireCandidate;
 }
 
-/** First entry that matches, in the order the human listed them. */
+/**
+ * First entry that matches, in the order the human listed them. A target in
+ * `held` belongs to another agent already: handing it out again would give one
+ * pane to two agents, so the human is asked instead.
+ */
 export function findPoolMatch(
   entries: PoolEntry[],
   candidates: WireCandidate[],
   kind: 'pane' | 'window',
-  asker?: Asker
+  asker?: Asker,
+  held: ReadonlySet<string> = new Set()
 ): PoolMatchResult | null {
+  const free = candidates.filter(c => !held.has(c.id));
   for (const entry of entries) {
-    const candidate = candidates.find(c => entryMatches(entry, c, kind, asker));
+    const candidate = free.find(c => entryMatches(entry, c, kind, asker));
     if (candidate) return { entry, candidate };
   }
   return null;

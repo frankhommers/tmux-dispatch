@@ -12,7 +12,7 @@ import { startService } from '../server-dist/http.js';
 import { localAccount } from '../server-dist/auth.js';
 import { parseAgentMessage } from '../server-dist/protocol.js';
 
-const PROTOCOL_VERSION = '1.6';
+const PROTOCOL_VERSION = '1.7';
 
 test('malformed inventory validation is ignored', () => {
   const frame = { type: 'validation', id: 'v-1', tmuxServer: '/socket:1:100', missing: ['%3', '@4'] };
@@ -38,6 +38,8 @@ function connectAgent(url, token, {
   instanceId = randomUUID(),
   cwd = '/tmp',
   tmuxServer = '/private/tmp/tmux-501/default:1:1',
+  sessionId,
+  host = 'test',
 } = {}) {
   const socket = new WebSocket(`${url.replace(/^http/, 'ws')}/agent`, {
     headers: token ? { Authorization: `Bearer ${token}` } : {},
@@ -62,7 +64,7 @@ function connectAgent(url, token, {
   socket.on('open', () => state.send({
     type: 'hello',
     protocolVersion,
-    agent: { instanceId, pid: 1, host: 'test', cwd, tmuxServer, tmuxSession: null, scope: 'none', client: 'test' },
+    agent: { instanceId, sessionId, pid: 1, host, cwd, tmuxServer, tmuxSession: null, scope: 'none', client: 'test' },
   }));
   return state;
 }
@@ -1407,5 +1409,324 @@ test('restored state belongs to its authenticated device and account', async () 
     service.store.revokeDevice(accountId, owner.device.id);
     service = await restart();
     assert.deepEqual((await inbox(service.url, config)).agents, []);
+  });
+});
+
+// Several agents in one directory: a session tells them apart, and a pinned
+// pane is never handed to a second agent while the first still holds it.
+
+const SERVER = '/private/tmp/tmux-501/default:16186:1788462695';
+const FOO = '/Users/frank/Repos/foo';
+
+async function holdThenGoIdle(url, config, options) {
+  const holder = connectAgent(url, config.token, { cwd: FOO, tmuxServer: SERVER, ...options });
+  await holder.waitFor('welcome');
+  holder.send({ type: 'grants', grants: [GRANT] });
+  await settle();
+  // An idle agent hangs up but keeps what it holds.
+  holder.close();
+  await settle();
+  return holder;
+}
+
+async function assertNotAnswered(agent, why) {
+  await new Promise(r => setTimeout(r, 300));
+  assert.equal(agent.received.some(m => m.type === 'answer'), false, why);
+}
+
+test('a pinned pane another live agent in the same directory holds is not handed out again', async () => {
+  await withService({}, async ({ url, config, service }) => {
+    const account = localAccount(service.store);
+    service.store.addPoolEntry(account.id, '%3', 'pane', true, { cwd: FOO, tmuxServer: SERVER });
+    await holdThenGoIdle(url, config);
+
+    const second = connectAgent(url, config.token, { cwd: FOO, tmuxServer: SERVER });
+    try {
+      await second.waitFor('welcome');
+      second.send(REQUEST);
+      await assertNotAnswered(second, 'one pane must not go to two agents');
+      const [request] = (await inbox(url, config)).requests;
+      assert.equal(request.id, REQUEST.id, 'the human is asked instead');
+    } finally {
+      second.close();
+    }
+  });
+});
+
+test('a pane held by an agent not heard from for a while is free for its pin again', async () => {
+  await withService({}, async ({ url, config, service }) => {
+    const account = localAccount(service.store);
+    service.store.addPoolEntry(account.id, '%3', 'pane', true, { cwd: FOO, tmuxServer: SERVER });
+    await holdThenGoIdle(url, config);
+
+    // A live tmux-mcp dials in every 30 seconds; this one stopped doing so.
+    const { LIVENESS_MS } = await import('../server-dist/agents.js');
+    for (const agent of service.agents.listAgents(account.id)) agent.lastSeen = Date.now() - LIVENESS_MS - 1;
+
+    const next = connectAgent(url, config.token, { cwd: FOO, tmuxServer: SERVER });
+    try {
+      await next.waitFor('welcome');
+      next.send(REQUEST);
+      const answer = await next.waitFor('answer');
+      assert.equal(answer.target, '%3');
+    } finally {
+      next.close();
+    }
+  });
+});
+
+test('a restarted server of the same session collects its pin while the old one still counts as live', async () => {
+  await withService({}, async ({ url, config, service }) => {
+    const account = localAccount(service.store);
+    service.store.addPoolEntry(account.id, '%3', 'pane', true, { tmuxServer: SERVER, session: 'thread-a' });
+    await holdThenGoIdle(url, config, { sessionId: 'thread-a' });
+
+    const restarted = connectAgent(url, config.token, { cwd: FOO, tmuxServer: SERVER, sessionId: 'thread-a' });
+    try {
+      await restarted.waitFor('welcome');
+      restarted.send(REQUEST);
+      const answer = await restarted.waitFor('answer');
+      assert.equal(answer.target, '%3', 'the same session is the same agent, not another holder');
+    } finally {
+      restarted.close();
+    }
+  });
+});
+
+test('a rule bound to a session only answers that session, wherever it works', async () => {
+  await withService({}, async ({ url, config, service }) => {
+    const account = localAccount(service.store);
+    service.store.addPoolEntry(account.id, '%3', 'pane', true, { tmuxServer: SERVER, session: 'thread-a' });
+
+    const other = connectAgent(url, config.token, { cwd: FOO, tmuxServer: SERVER, sessionId: 'thread-b' });
+    try {
+      await other.waitFor('welcome');
+      other.send({ ...REQUEST, id: 'r-other' });
+      await assertNotAnswered(other, 'another session in the same directory must not collect it');
+    } finally {
+      other.close();
+    }
+
+    const unnamed = connectAgent(url, config.token, { cwd: FOO, tmuxServer: SERVER });
+    try {
+      await unnamed.waitFor('welcome');
+      unnamed.send({ ...REQUEST, id: 'r-unnamed' });
+      await assertNotAnswered(unnamed, 'an agent without a session is not that session either');
+    } finally {
+      unnamed.close();
+    }
+
+    const moved = connectAgent(url, config.token, { cwd: '/Users/frank/worktrees/foo-2', tmuxServer: SERVER, sessionId: 'thread-a' });
+    try {
+      await moved.waitFor('welcome');
+      moved.send({ ...REQUEST, id: 'r-moved' });
+      const answer = await moved.waitFor('answer');
+      assert.equal(answer.target, '%3', 'the session moved to a worktree and still gets its pane');
+    } finally {
+      moved.close();
+    }
+  });
+});
+
+test('keeping an assignment of a named session binds the rule to that session', async () => {
+  await withService({}, async ({ url, config }) => {
+    const agent = connectAgent(url, config.token, { cwd: FOO, tmuxServer: SERVER, sessionId: 'thread-a' });
+    try {
+      await agent.waitFor('welcome');
+      agent.send({ type: 'grants', grants: [GRANT] });
+      await settle();
+
+      const body = await inbox(url, config);
+      assert.equal(body.agents[0].identity.sessionId, 'thread-a');
+      const response = await fetch(`${url}/api/agents/${body.agents[0].id}/keep`, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json', ...bearer(config) },
+        body: JSON.stringify({ target: '%3' }),
+      });
+      assert.equal(response.status, 200);
+
+      const { pool } = await (await fetch(`${url}/api/pool`, { headers: bearer(config) })).json();
+      assert.equal(pool.length, 1);
+      assert.equal(pool[0].session, 'thread-a');
+      assert.equal(pool[0].cwd, null, 'the path stays free, so the session may move to a worktree');
+      assert.equal(pool[0].host, 'test');
+    } finally {
+      agent.close();
+    }
+  });
+});
+
+test('keeping an assignment without a session binds the rule to the directory, as before', async () => {
+  await withService({}, async ({ url, config }) => {
+    const agent = connectAgent(url, config.token, { cwd: FOO, tmuxServer: SERVER });
+    try {
+      await agent.waitFor('welcome');
+      agent.send({ type: 'grants', grants: [GRANT] });
+      await settle();
+
+      const body = await inbox(url, config);
+      await fetch(`${url}/api/agents/${body.agents[0].id}/keep`, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json', ...bearer(config) },
+        body: JSON.stringify({ target: '%3' }),
+      });
+      const { pool } = await (await fetch(`${url}/api/pool`, { headers: bearer(config) })).json();
+      assert.equal(pool[0].session, null);
+      assert.equal(pool[0].cwd, FOO);
+    } finally {
+      agent.close();
+    }
+  });
+});
+
+test('a session id that is not a usable string is dropped', async () => {
+  await withService({}, async ({ url, config }) => {
+    const numeric = connectAgent(url, config.token, { sessionId: 42 });
+    const blank = connectAgent(url, config.token, { sessionId: '   ' });
+    const long = connectAgent(url, config.token, { sessionId: `  ${'x'.repeat(500)}` });
+    try {
+      for (const agent of [numeric, blank, long]) {
+        await agent.waitFor('welcome');
+        agent.send({ type: 'grants', grants: [GRANT] });
+      }
+      await settle();
+      const ids = (await inbox(url, config)).agents.map(agent => agent.identity.sessionId);
+      assert.deepEqual(ids.filter(id => id !== undefined), ['x'.repeat(200)]);
+      assert.equal(ids.filter(id => id === undefined).length, 2);
+    } finally {
+      numeric.close();
+      blank.close();
+      long.close();
+    }
+  });
+});
+
+// Per-element rules: every bound element must hold at once, and each one can
+// be rebound on its own.
+
+test('a rule binding both session and path only answers when both hold', async () => {
+  await withService({}, async ({ url, config, service }) => {
+    const account = localAccount(service.store);
+    service.store.addPoolEntry(account.id, '%3', 'pane', true, { cwd: FOO, tmuxServer: SERVER, session: 'thread-a' });
+
+    const moved = connectAgent(url, config.token, { cwd: '/Users/frank/worktrees/foo-2', tmuxServer: SERVER, sessionId: 'thread-a' });
+    try {
+      await moved.waitFor('welcome');
+      moved.send({ ...REQUEST, id: 'r-moved' });
+      await assertNotAnswered(moved, 'the right session in the wrong directory is not a match');
+    } finally {
+      moved.close();
+    }
+
+    const there = connectAgent(url, config.token, { cwd: FOO, tmuxServer: SERVER, sessionId: 'thread-a' });
+    try {
+      await there.waitFor('welcome');
+      there.send({ ...REQUEST, id: 'r-there' });
+      const answer = await there.waitFor('answer');
+      assert.equal(answer.target, '%3');
+    } finally {
+      there.close();
+    }
+  });
+});
+
+test('a rule bound to a machine stays silent for agents on another one', async () => {
+  await withService({}, async ({ url, config, service }) => {
+    const account = localAccount(service.store);
+    service.store.addPoolEntry(account.id, '%3', 'pane', true, { tmuxServer: SERVER, host: 'frank-mbp' });
+
+    const elsewhere = connectAgent(url, config.token, { cwd: FOO, tmuxServer: SERVER, host: 'build-box' });
+    try {
+      await elsewhere.waitFor('welcome');
+      elsewhere.send({ ...REQUEST, id: 'r-elsewhere' });
+      await assertNotAnswered(elsewhere, 'another machine must not collect this rule');
+    } finally {
+      elsewhere.close();
+    }
+
+    const here = connectAgent(url, config.token, { cwd: FOO, tmuxServer: SERVER, host: 'frank-mbp' });
+    try {
+      await here.waitFor('welcome');
+      here.send({ ...REQUEST, id: 'r-here' });
+      const answer = await here.waitFor('answer');
+      assert.equal(answer.target, '%3');
+    } finally {
+      here.close();
+    }
+  });
+});
+
+test('a rule can be written with every element, as the clone form does', async () => {
+  await withService({}, async ({ url, config }) => {
+    const response = await fetch(`${url}/api/pool`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json', ...bearer(config) },
+      body: JSON.stringify({
+        pattern: '%3', kind: 'pane', reusable: true,
+        session: 'thread-b', cwd: FOO, tmuxServer: SERVER, host: 'frank-mbp',
+      }),
+    });
+    assert.equal(response.status, 200);
+    const { entry } = await response.json();
+    assert.deepEqual(
+      { session: entry.session, cwd: entry.cwd, tmuxServer: entry.tmuxServer, host: entry.host },
+      { session: 'thread-b', cwd: FOO, tmuxServer: SERVER, host: 'frank-mbp' },
+    );
+
+    const blank = await fetch(`${url}/api/pool`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json', ...bearer(config) },
+      body: JSON.stringify({ pattern: '*agents:*', kind: 'pane', reusable: true, session: '  ', cwd: '' }),
+    });
+    const made = (await blank.json()).entry;
+    assert.equal(made.session, null, 'blank means unbound, not a rule matching nothing');
+    assert.equal(made.cwd, null);
+  });
+});
+
+test('single elements of a rule can be rebound, and matching follows', async () => {
+  await withService({}, async ({ url, config, service }) => {
+    const account = localAccount(service.store);
+    const entry = service.store.addPoolEntry(account.id, '%3', 'pane', true, { cwd: FOO, tmuxServer: SERVER });
+
+    const patch = async (body, expected = 200) => {
+      const response = await fetch(`${url}/api/pool/${entry.id}`, {
+        method: 'PATCH',
+        headers: { 'content-type': 'application/json', ...bearer(config) },
+        body: JSON.stringify(body),
+      });
+      assert.equal(response.status, expected);
+      return response.json();
+    };
+
+    // Unbind the path, bind the session instead; the stored rule says so.
+    const rebound = (await patch({ cwd: null, session: 'thread-a' })).entry;
+    assert.equal(rebound.cwd, null);
+    assert.equal(rebound.session, 'thread-a');
+
+    // Matching follows what the rule now says: another directory is fine,
+    // another session is not.
+    const agent = connectAgent(url, config.token, { cwd: '/elsewhere', tmuxServer: SERVER, sessionId: 'thread-a' });
+    try {
+      await agent.waitFor('welcome');
+      agent.send(REQUEST);
+      const answer = await agent.waitFor('answer');
+      assert.equal(answer.target, '%3');
+    } finally {
+      agent.close();
+    }
+
+    await patch({ session: '   ' }, 400);
+    await patch({ pattern: '' }, 400);
+    const renamed = (await patch({ pattern: '%9', reusable: false })).entry;
+    assert.equal(renamed.pattern, '%9');
+    assert.equal(renamed.reusable, false);
+
+    const missing = await fetch(`${url}/api/pool/99999`, {
+      method: 'PATCH',
+      headers: { 'content-type': 'application/json', ...bearer(config) },
+      body: JSON.stringify({ cwd: null }),
+    });
+    assert.equal(missing.status, 404);
   });
 });

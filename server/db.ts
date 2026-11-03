@@ -49,12 +49,21 @@ export interface PoolEntry {
   /** Glob over the requesting agent's working directory. Empty means anyone. */
   cwd: string | null;
   /**
+   * The configured agent session a kept assignment was made for. When set,
+   * only that session collects the rule. Empty: any session.
+   */
+  session: string | null;
+  /**
    * The tmux server a bare-id rule was made on, as `socket:pid:start_time`.
    * Ids are only unique within one server, so a rule naming one is void
    * elsewhere. Empty for label globs, which mean the same on any server.
    */
   tmuxServer: string | null;
-  /** The machine the rule was made on, so a sweep never crosses hosts. */
+  /**
+   * The machine the rule binds to, and the one a sweep stays on. Empty: any
+   * machine. Rules from before this was matched keep working: they name a
+   * tmux server, which lives on one machine anyway.
+   */
   host: string | null;
   usedAt: number | null;
   createdAt: number;
@@ -102,6 +111,7 @@ export class Store {
         reusable INTEGER NOT NULL DEFAULT 0,
         cwd TEXT,
         tmux_server TEXT,
+        session TEXT,
         used_at INTEGER,
         created_at INTEGER NOT NULL
       );
@@ -110,6 +120,7 @@ export class Store {
     this.addColumnIfMissing('pool', 'cwd', 'TEXT');
     this.addColumnIfMissing('pool', 'tmux_server', 'TEXT');
     this.addColumnIfMissing('pool', 'host', 'TEXT');
+    this.addColumnIfMissing('pool', 'session', 'TEXT');
     this.collapseDuplicatePoolEntries();
   }
 
@@ -122,7 +133,7 @@ export class Store {
     this.db.exec(`
       DELETE FROM pool WHERE id NOT IN (
         SELECT MIN(id) FROM pool
-        GROUP BY account_id, pattern, kind, IFNULL(cwd, ''), IFNULL(tmux_server, '')
+        GROUP BY account_id, pattern, kind, IFNULL(cwd, ''), IFNULL(tmux_server, ''), IFNULL(session, '')
       );
     `);
   }
@@ -244,32 +255,35 @@ export class Store {
     pattern: string,
     kind: PoolMatch,
     reusable: boolean,
-    bound: { cwd?: string; tmuxServer?: string; host?: string } = {}
+    bound: { cwd?: string; tmuxServer?: string; host?: string; session?: string } = {}
   ): PoolEntry {
     const createdAt = Date.now();
     const cwd = bound.cwd ?? null;
     const tmuxServer = bound.tmuxServer ?? null;
     const host = bound.host ?? null;
+    const session = bound.session ?? null;
 
     const existing = this.listPool(accountId).find(
       entry => entry.pattern === pattern
         && entry.kind === kind
         && entry.cwd === cwd
         && entry.tmuxServer === tmuxServer
+        && entry.session === session
+        && entry.host === host
     );
     if (existing) return existing;
 
     this.db.prepare(
-      'INSERT INTO pool (account_id, pattern, kind, reusable, cwd, tmux_server, host, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)'
-    ).run(accountId, pattern, kind, reusable ? 1 : 0, cwd, tmuxServer, host, createdAt);
+      'INSERT INTO pool (account_id, pattern, kind, reusable, cwd, tmux_server, host, session, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)'
+    ).run(accountId, pattern, kind, reusable ? 1 : 0, cwd, tmuxServer, host, session, createdAt);
     const id = Number((this.db.prepare('SELECT last_insert_rowid() AS id').get() as { id: number }).id);
-    return { id, accountId, pattern, kind, reusable, cwd, tmuxServer, host, usedAt: null, createdAt };
+    return { id, accountId, pattern, kind, reusable, cwd, session, tmuxServer, host, usedAt: null, createdAt };
   }
 
   listPool(accountId: number): PoolEntry[] {
     const rows = this.db.prepare(
-      'SELECT id, account_id, pattern, kind, reusable, cwd, tmux_server, host, used_at, created_at FROM pool WHERE account_id = ? ORDER BY created_at, id'
-    ).all(accountId) as Array<{ id: number; account_id: number; pattern: string; kind: string; reusable: number; cwd: string | null; tmux_server: string | null; host: string | null; used_at: number | null; created_at: number }>;
+      'SELECT id, account_id, pattern, kind, reusable, cwd, session, tmux_server, host, used_at, created_at FROM pool WHERE account_id = ? ORDER BY created_at, id'
+    ).all(accountId) as Array<{ id: number; account_id: number; pattern: string; kind: string; reusable: number; cwd: string | null; session: string | null; tmux_server: string | null; host: string | null; used_at: number | null; created_at: number }>;
     return rows.map(row => ({
       id: row.id,
       accountId: row.account_id,
@@ -277,11 +291,38 @@ export class Store {
       kind: row.kind as PoolMatch,
       reusable: row.reusable === 1,
       cwd: row.cwd,
+      session: row.session,
       tmuxServer: row.tmux_server,
       host: row.host,
       usedAt: row.used_at,
       createdAt: row.created_at,
     }));
+  }
+
+  /**
+   * Rebind single elements of a rule: a string binds, null unbinds. Fields
+   * absent from the patch stay as they are. Returns the entry as it now is,
+   * or null when it is not this account's to change.
+   */
+  updatePoolEntry(
+    accountId: number,
+    id: number,
+    patch: Partial<{ pattern: string; session: string | null; cwd: string | null; tmuxServer: string | null; host: string | null; reusable: boolean }>
+  ): PoolEntry | null {
+    const existing = this.listPool(accountId).find(entry => entry.id === id);
+    if (!existing) return null;
+    const next = {
+      pattern: patch.pattern ?? existing.pattern,
+      session: patch.session !== undefined ? patch.session : existing.session,
+      cwd: patch.cwd !== undefined ? patch.cwd : existing.cwd,
+      tmuxServer: patch.tmuxServer !== undefined ? patch.tmuxServer : existing.tmuxServer,
+      host: patch.host !== undefined ? patch.host : existing.host,
+      reusable: patch.reusable ?? existing.reusable,
+    };
+    this.db.prepare(
+      'UPDATE pool SET pattern = ?, session = ?, cwd = ?, tmux_server = ?, host = ?, reusable = ? WHERE id = ? AND account_id = ?'
+    ).run(next.pattern, next.session, next.cwd, next.tmuxServer, next.host, next.reusable ? 1 : 0, id, accountId);
+    return { ...existing, ...next };
   }
 
   /**

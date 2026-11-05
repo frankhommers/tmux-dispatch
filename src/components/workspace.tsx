@@ -73,7 +73,7 @@ export function Workspace({ tab, onTab, counts, agents, rules, machines }: {
             Agents <TabCount value={counts.agents} />
           </TabsTrigger>
           <TabsTrigger value="rules">
-            <span><span className="max-sm:hidden">Automatic </span><span className="sm:hidden">R</span><span className="max-sm:hidden">r</span>ules</span> <TabCount value={counts.rules} />
+            <span className="max-sm:hidden">Automatic rules</span><span className="sm:hidden">Rules</span> <TabCount value={counts.rules} />
           </TabsTrigger>
           <TabsTrigger value="machines">
             Machines <TabCount value={counts.machines} />

@@ -13,10 +13,7 @@ export function AuthPanel({ title, subtitle, children, theme, onTheme }: {
 }) {
   return (
     <div className="flex min-h-dvh flex-col">
-      <div className="flex justify-end p-4">
-        <ThemeSelect value={theme} onChange={onTheme} />
-      </div>
-      <main className="flex flex-1 items-start justify-center px-4 pt-[8vh] pb-16 sm:items-center sm:pt-0">
+      <main className="flex flex-1 items-start justify-center px-4 pt-[10vh] pb-16 sm:items-center sm:pt-0">
         <div className="w-full max-w-[400px]">
           <div className="mb-5 flex items-center gap-2.5 px-1">
             <span aria-hidden className="grid size-8 place-items-center rounded-md bg-foreground font-mono text-xs font-bold text-background">&gt;_</span>
@@ -30,6 +27,10 @@ export function AuthPanel({ title, subtitle, children, theme, onTheme }: {
             {subtitle && <p className="mt-1 text-sm text-muted-foreground">{subtitle}</p>}
             <div className="mt-5 grid gap-3">{children}</div>
           </Panel>
+          <div className="mt-3 flex items-center justify-end gap-2 px-1 text-xs text-muted-foreground">
+            Appearance
+            <ThemeSelect value={theme} onChange={onTheme} />
+          </div>
         </div>
       </main>
     </div>

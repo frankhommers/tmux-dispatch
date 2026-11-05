@@ -17,6 +17,7 @@ import { useInbox } from '@/hooks/use-inbox';
 import { getSession, type SessionInfo } from '@/lib/api';
 import { describe, onUnauthorized } from '@/lib/errors';
 import { useTheme } from '@/lib/theme';
+import { minutesLeft } from '@/lib/format';
 
 export default function App() {
   const theme = useTheme();
@@ -88,6 +89,8 @@ export default function App() {
         wasLive={data.wasLive}
         counts={{
           requests: inbox ? inbox.requests.length : null,
+          expiring: inbox ? inbox.requests.filter(request => minutesLeft(request.expiresAt) < 10).length : 0,
+          urgent: inbox ? inbox.requests.filter(request => minutesLeft(request.expiresAt) < 2).length : 0,
           agents: inbox ? inbox.agents.filter(agent => agent.connected).length : null,
           rules: data.pool.data ? data.pool.data.length : null,
         }}

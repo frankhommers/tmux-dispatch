@@ -45,10 +45,11 @@ export function RequestsSection({ inbox, stale, onRefresh }: {
     <section id="requests" aria-labelledby="requests-title" className="min-w-0 scroll-mt-20">
       <div className="mb-3 flex flex-wrap items-center gap-x-3 gap-y-1">
         <h2 id="requests-title" tabIndex={-1} className="text-lg leading-[26px] font-semibold">Requests</h2>
-        {loaded && requests.length > 0 && <Tag tone="attention">{requests.length} waiting</Tag>}
         {loaded && expiring > 0 && <Tag tone="urgent">{expiring} about to expire</Tag>}
         {loaded && requests.length > 0 && (
-          <p className="text-[13px] text-muted-foreground max-sm:basis-full">An agent is blocked until you answer.</p>
+          <p className="text-[13px] text-muted-foreground max-sm:basis-full">
+            {requests.length === 1 ? 'An agent is blocked until you answer.' : `${requests.length} agents are blocked until you answer.`}
+          </p>
         )}
       </div>
       {loaded && (

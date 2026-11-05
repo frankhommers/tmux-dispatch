@@ -178,20 +178,60 @@ export function sameDraft(a: Draft, b: Draft): boolean {
   return JSON.stringify(a) === JSON.stringify(b);
 }
 
-/** The rule in one plain sentence, for review before saving. */
-export function summarize(draft: Draft): string {
+/** One piece of the scope sentence. A missing piece names what the form still needs. */
+export interface ScopePart {
+  text: string;
+  missing?: boolean;
+}
+
+export interface Scope {
+  parts: ScopePart[];
+  /** Whether any condition is limited but blank, or the target needs more. */
+  incomplete: boolean;
+}
+
+/**
+ * The rule in plain sentences, for review before saving. A condition that is
+ * limited but blank is never described as Any: it shows up as missing, and
+ * the valid parts stay as they are.
+ */
+export function summarize(draft: Draft): Scope {
   const noun = draft.kind === 'window' ? 'window' : 'pane';
-  const pattern = valueOf(draft, 'pattern') || '…';
-  const target = pattern === '*'
-    ? `Any ${noun}`
-    : isBareId(pattern) ? `${noun === 'window' ? 'Window' : 'Pane'} ${pattern}` : `${noun === 'window' ? 'Windows' : 'Panes'} matching ${pattern}`;
+  const Noun = noun === 'window' ? 'Window' : 'Pane';
+  const blank = (element: Element) => draft.conditions[element].constrained && !draft.conditions[element].value.trim();
+  const pattern = valueOf(draft, 'pattern') ?? '*';
+  const bareId = !blank('pattern') && isBareId(pattern);
+  const missing = (text: string): ScopePart => ({ text, missing: true });
+
+  const target: ScopePart = blank('pattern') ? missing('target not specified')
+    : pattern === '*' ? { text: `Any ${noun}` }
+      : bareId && (pattern.startsWith('%') !== (noun === 'pane')) ? missing(`${pattern} is not a ${noun} ID`)
+        : bareId ? { text: `${Noun} ${pattern}` }
+          : { text: `${Noun}s matching ${pattern}` };
+
   const session = valueOf(draft, 'session');
+  const who: ScopePart = blank('session') ? missing('agent session not specified')
+    : session ? { text: `from agents in session ${shortSession(session)}` } : { text: 'from any agent session' };
   const host = valueOf(draft, 'host');
+  const where: ScopePart = blank('host') ? missing('machine not specified')
+    : host ? { text: `on ${host}` } : { text: 'on any machine' };
   const server = valueOf(draft, 'tmuxServer');
+  const which: ScopePart = blank('tmuxServer') ? missing('tmux server not specified')
+    : server ? { text: `using server ${shortServer(server)}` }
+      : bareId ? missing(`tmux server required for ${pattern}`) : { text: 'on any tmux server' };
   const cwd = valueOf(draft, 'cwd');
-  const who = session ? `from agents in session ${shortSession(session)}` : 'from any agent session';
-  const where = host ? `on ${host}` : 'on any machine';
-  const which = server ? `using server ${shortServer(server)}` : 'on any tmux server';
-  const path = cwd ? `Path matching ${cwd}.` : 'Any path.';
-  return `${target} ${who}, ${where}, ${which}. ${path} ${draft.reusable ? 'Reusable.' : 'One-shot.'}`;
+  const path: ScopePart = blank('cwd') ? missing('path not specified')
+    : cwd ? { text: `path matching ${cwd}` } : { text: 'any path' };
+
+  // Punctuation stays plain text, so only the missing words stand out.
+  const sentence = (clauses: ScopePart[]): ScopePart[] => clauses.flatMap((part, index) => [
+    { ...part, text: index === 0 ? part.text[0].toUpperCase() + part.text.slice(1) : part.text },
+    { text: index === clauses.length - 1 ? '. ' : ', ' },
+  ]);
+  const parts = [
+    ...sentence([target, who, where, which]),
+    ...sentence([path]),
+    { text: draft.reusable ? 'Reusable.' : 'One-shot.' },
+  ];
+  return { parts, incomplete: parts.some(part => part.missing) };
 }

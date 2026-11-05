@@ -3,7 +3,7 @@ import { AlertTriangle, Info } from 'lucide-react';
 import { toast } from 'sonner';
 import { Button } from '@/components/ui/button';
 import { DialogDescription, DialogTitle } from '@/components/ui/dialog';
-import { DetailList, Disclosure, InlineError, TimeAgo, selectClass, type DetailItem } from '@/components/common';
+import { DetailList, Disclosure, InlineError, Tag, TimeAgo, selectClass, type DetailItem } from '@/components/common';
 import { ConditionRow, fieldId, modeId } from '@/components/rules/condition-row';
 import { LastUsed, ServerState } from '@/components/rules/rule-cells';
 import {
@@ -280,6 +280,7 @@ export function RuleEditorForm({ session, pool, agents, onSwitch, onClose, onDon
   }
 
   const body = editing !== null && baseRule ? toPatch(baseRule, draft) : toNewEntry(draft);
+  const scope = summarize(draft);
   const blocked = duplicate !== null && duplicate !== undefined;
 
   return (
@@ -413,14 +414,27 @@ export function RuleEditorForm({ session, pool, agents, onSwitch, onClose, onDon
           </Disclosure>
         </fieldset>
 
-        <section aria-labelledby="rule-editor-scope" className="rounded-md bg-muted/60 px-3 py-2.5">
-          <h3 id="rule-editor-scope" className="text-xs leading-4 font-medium text-muted-foreground">Scope</h3>
-          <p className="mt-1 text-[13px] leading-[18px] break-anywhere text-foreground">{summarize(draft)}</p>
-          <Disclosure summary={editing !== null ? 'Exact change' : 'Exact values'} className="mt-1">
-            <pre className="m-0 overflow-x-auto rounded-sm bg-card p-2 font-mono text-xs whitespace-pre-wrap break-anywhere select-text">
-              {JSON.stringify(body, null, 2)}
-            </pre>
-          </Disclosure>
+        <section
+          aria-labelledby="rule-editor-scope"
+          className={cn('rounded-md bg-muted/60 px-3 py-2.5', scope.incomplete && 'ring-1 ring-inset ring-warning-border/40')}
+        >
+          <h3 id="rule-editor-scope" className="flex items-center gap-2 text-xs leading-4 font-medium text-muted-foreground">
+            Scope
+            {scope.incomplete && <Tag tone="attention">Incomplete</Tag>}
+          </h3>
+          <p className="mt-1 text-[13px] leading-[18px] break-anywhere text-foreground">
+            {scope.parts.map((part, index) => part.missing
+              ? <span key={index} className="font-medium text-warning">{part.text}</span>
+              : <span key={index}>{part.text}</span>)}
+          </p>
+          {/* Nothing is ready to save while the scope is incomplete, so there are no exact values to show. */}
+          {!scope.incomplete && (
+            <Disclosure summary={editing !== null ? 'Exact change' : 'Exact values'} className="mt-1">
+              <pre className="m-0 overflow-x-auto rounded-sm bg-card p-2 font-mono text-xs whitespace-pre-wrap break-anywhere select-text">
+                {JSON.stringify(body, null, 2)}
+              </pre>
+            </Disclosure>
+          )}
         </section>
 
         {saveError && <InlineError>{saveError}</InlineError>}
@@ -433,7 +447,7 @@ export function RuleEditorForm({ session, pool, agents, onSwitch, onClose, onDon
               <Info className="mt-px size-4 shrink-0 text-muted-foreground" aria-hidden />
               <p className="min-w-0 flex-1">
                 <span className="font-medium">This rule already exists</span>
-                <span className="text-muted-foreground">
+                <span className="text-muted-foreground max-sm:sr-only">
                   {' — '}rule #{duplicate.id} has the same type and conditions.{' '}
                   {duplicate.reusable !== draft.reusable
                     ? `Only Use differs: edit rule #${duplicate.id} to change it.`

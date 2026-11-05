@@ -40,12 +40,16 @@ export function TargetRow({ target, name, selected, suggested, heldBy, onSelect 
         className="size-4 shrink-0 accent-[var(--ring)]"
       />
       <code className="font-mono text-sm font-semibold">{target.id}</code>
-      <span className="flex min-w-0 items-center gap-2">
+      <span className="flex min-w-0 items-center gap-x-2 gap-y-0.5 max-sm:flex-wrap">
         {parsed ? (
           <>
-            <span className="shrink-0 font-mono text-[13px]">{location}</span>
+            <span className="font-mono text-[13px] sm:shrink-0 max-sm:break-anywhere">{location}</span>
             {command && <Tag tone="neutral" className="font-mono font-normal">{command}</Tag>}
-            {title && <span className="min-w-0 truncate text-[13px] text-muted-foreground" title={title}>{title}</span>}
+            {title && (
+              <span className="min-w-0 text-[13px] text-muted-foreground sm:truncate max-sm:basis-full max-sm:break-anywhere" title={title}>
+                {title}
+              </span>
+            )}
           </>
         ) : (
           <span className="min-w-0 font-mono text-[13px] break-anywhere">{target.label}</span>

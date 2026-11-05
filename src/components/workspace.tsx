@@ -30,7 +30,8 @@ export function useWorkspaceTab() {
       if (!next) return;
       setTabState(next);
       localStorage.setItem(KEY, next);
-      document.getElementById('workspace')?.scrollIntoView({ block: 'start' });
+      const workspace = document.getElementById('workspace');
+      if (workspace && workspace.getBoundingClientRect().top < 0) workspace.scrollIntoView({ block: 'start' });
     };
     window.addEventListener('hashchange', onHash);
     return () => window.removeEventListener('hashchange', onHash);
@@ -65,9 +66,9 @@ export function Workspace({ tab, onTab, counts, agents, rules, machines }: {
   machines: ReactNode;
 }) {
   return (
-    <section id="workspace" aria-label="Agents, rules and machines" className="min-w-0 scroll-mt-16">
+    <section id="workspace" aria-label="Agents, rules and machines" className="min-w-0 scroll-mt-14">
       <Tabs value={tab} onValueChange={value => onTab(value as WorkspaceTab)}>
-        <TabsList aria-label="Sections">
+        <TabsList aria-label="Sections" className="sticky top-14 z-30 -mx-4 bg-background px-4 pt-2 sm:-mx-6 sm:px-6">
           <TabsTrigger value="agents">
             Agents <TabCount value={counts.agents} />
           </TabsTrigger>
@@ -78,9 +79,10 @@ export function Workspace({ tab, onTab, counts, agents, rules, machines }: {
             Machines <TabCount value={counts.machines} />
           </TabsTrigger>
         </TabsList>
-        <TabsContent value="agents" id="agents">{agents}</TabsContent>
-        <TabsContent value="rules" id="rules">{rules}</TabsContent>
-        <TabsContent value="machines" id="machines">{machines}</TabsContent>
+        {/* Mounted while hidden: drafts, open details and handled focus requests survive a tab switch. */}
+        <TabsContent value="agents" forceMount>{agents}</TabsContent>
+        <TabsContent value="rules" forceMount>{rules}</TabsContent>
+        <TabsContent value="machines" forceMount>{machines}</TabsContent>
       </Tabs>
     </section>
   );

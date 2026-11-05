@@ -1,5 +1,5 @@
 import { useId, useState } from 'react';
-import { ChevronDown, Repeat } from 'lucide-react';
+import { ChevronDown, Repeat, Repeat1 } from 'lucide-react';
 import { toast } from 'sonner';
 import { Button } from '@/components/ui/button';
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip';
@@ -7,15 +7,40 @@ import { DetailList, NotReported, Tag, TimeAgo } from '@/components/common';
 import { keepGrant, parseLabel, revokeGrant, type ConnectedAgent, type Grant, type PoolEntry } from '@/lib/api';
 import { describe } from '@/lib/errors';
 import { absolute, ago } from '@/lib/format';
-import { exactRulesFor, keepDefaults, keepScope, keptBy } from '@/lib/rules';
+import { exactRulesFor, keepDefaults, keepScope, keptBy, lifecycleOf, type RuleLifecycle } from '@/lib/rules';
 import { cn } from '@/lib/utils';
 
 /**
  * Grant rows line up as columns from lg up:
  * target | location, command, title | activity | automatic | revoke | details.
- * Below lg each row folds into two lines.
+ * Below lg each row folds into two lines; on phones activity gets a line of
+ * its own and the rule scope shows under "Auto-assign next time".
  */
 const GRID = 'lg:grid lg:grid-cols-[72px_minmax(0,1fr)_132px_188px_92px_28px] lg:items-center lg:gap-x-3';
+
+/** What the grant row says about the rule that assigns this target again, by lifecycle. */
+function linkedCopy(id: number, state: RuleLifecycle, target: string) {
+  switch (state) {
+    case 'reusable':
+      return {
+        label: `Auto · rule #${id}`,
+        detail: `Rule #${id} assigns it again automatically.`,
+        spoken: `Rule #${id} assigns ${target} to this agent again automatically. Opens the rule.`,
+      };
+    case 'once':
+      return {
+        label: `Auto once · rule #${id}`,
+        detail: `Rule #${id} assigns it automatically one more time, then it is used up.`,
+        spoken: `Rule #${id} assigns ${target} to this agent automatically one more time. Opens the rule.`,
+      };
+    case 'spent':
+      return {
+        label: `Rule #${id} used up`,
+        detail: `Rule #${id} was for one use and has been used. Reset it in Rules to assign it again.`,
+        spoken: `Rule #${id} is used up and will not assign ${target} again until reset. Opens the rule.`,
+      };
+  }
+}
 
 interface Props {
   agent: ConnectedAgent;
@@ -32,7 +57,7 @@ export function GrantRow({ agent, grant, pool, onChanged, onShowRule, onRevoked 
   const [busy, setBusy] = useState<'keep' | 'revoke' | null>(null);
   const [open, setOpen] = useState(false);
   // The rule just made, shown until the refreshed pool can say so itself.
-  const [justKept, setJustKept] = useState<{ id: number; pool: PoolEntry[] | null } | null>(null);
+  const [justKept, setJustKept] = useState<{ id: number; state: RuleLifecycle; pool: PoolEntry[] | null } | null>(null);
   const detailsId = useId();
   const scopeId = useId();
 
@@ -40,8 +65,15 @@ export function GrantRow({ agent, grant, pool, onChanged, onShowRule, onRevoked 
   const offline = !agent.connected;
   const scope = keepScope(agent.identity);
   const keptRule = pool ? keptBy(pool, agent.identity, grant) : undefined;
-  const keptId = keptRule?.id
-    ?? (justKept && (justKept.pool === pool || pool?.some(entry => entry.id === justKept.id)) ? justKept.id : undefined);
+  // The rule keep would return. When spent, keeping again would only return it
+  // (the server dedupes on scope), so the row links to it for a Reset instead.
+  const linked = keptRule
+    ? { id: keptRule.id, state: lifecycleOf(keptRule) }
+    : justKept && (justKept.pool === pool || pool?.some(entry => entry.id === justKept.id))
+      ? { id: justKept.id, state: justKept.state }
+      : undefined;
+  const copy = linked && linkedCopy(linked.id, linked.state, grant.target);
+  const activity = grant.lastActivity ? <TimeAgo at={grant.lastActivity} prefix="Used" /> : 'No activity';
 
   const keep = async () => {
     setBusy('keep');
@@ -49,9 +81,14 @@ export function GrantRow({ agent, grant, pool, onChanged, onShowRule, onRevoked 
     try {
       const { entry } = await keepGrant(agent.id, grant.target);
       const existed = known.has(entry.id);
-      setJustKept({ id: entry.id, pool });
+      const state = lifecycleOf(entry);
+      setJustKept({ id: entry.id, state, pool });
       toast.success(
-        existed ? `Rule #${entry.id} already auto-assigns ${grant.target}` : `Rule #${entry.id} auto-assigns ${grant.target} next time`,
+        !existed
+          ? `Rule #${entry.id} auto-assigns ${grant.target} next time`
+          : state === 'reusable'
+            ? `Rule #${entry.id} already auto-assigns ${grant.target}`
+            : `Rule #${entry.id} already exists for ${grant.target}`,
         {
           description: existed ? undefined : scope,
           action: { label: 'View rule', onClick: () => onShowRule(entry.id) },
@@ -70,13 +107,15 @@ export function GrantRow({ agent, grant, pool, onChanged, onShowRule, onRevoked 
     setBusy('revoke');
     try {
       await revokeGrant(agent.id, grant.target);
+      // Only rules that can still fire; a reusable one says the most about what happens next.
       const related = pool ? exactRulesFor(pool, agent, grant) : [];
-      const ruleNote = related.length > 0
-        ? `Rule #${related[0].id} can still assign it automatically. Removing a rule is separate.`
+      const next = related.find(entry => entry.reusable) ?? related[0];
+      const ruleNote = next
+        ? `Rule #${next.id} can still assign it automatically${next.reusable ? '' : ', once'}. Removing a rule is separate.`
         : undefined;
       toast.success(agent.connected ? `Revoked ${grant.target}` : 'Revocation recorded. Takes effect at its next action.', {
         description: ruleNote,
-        action: related.length > 0 ? { label: 'View rule', onClick: () => onShowRule(related[0].id) } : undefined,
+        action: next ? { label: 'View rule', onClick: () => onShowRule(next.id) } : undefined,
       });
       onRevoked?.();
       onChanged();
@@ -96,27 +135,44 @@ export function GrantRow({ agent, grant, pool, onChanged, onShowRule, onRevoked 
         <div className="flex min-w-0 items-baseline gap-x-2.5 lg:contents">
           <code className={cn('shrink-0 font-mono text-sm leading-5 font-semibold', strong)}>{grant.target}</code>
           <div className="flex min-w-0 flex-1 items-center gap-x-2">
-            <span className={cn('font-mono text-[13px] leading-5 break-anywhere', location ? 'shrink-0' : 'min-w-0', strong)}>
+            <span
+              className={cn(
+                'font-mono text-[13px] leading-5 break-anywhere',
+                location ? 'shrink-0 max-sm:min-w-0 max-sm:shrink' : 'min-w-0',
+                strong,
+              )}
+            >
               {location || grant.label}
             </span>
             {command && <Tag className="font-mono font-normal">{command}</Tag>}
             {title && (
-              <span title={title} className="min-w-0 truncate text-[13px] leading-5 text-muted-foreground">
+              <span title={title} className="min-w-0 truncate text-[13px] leading-5 text-muted-foreground max-sm:hidden">
                 {title}
               </span>
             )}
           </div>
         </div>
 
+        {/* Phones: activity first, whole, then the title in what room is left. */}
+        <p className="flex min-w-0 items-baseline gap-x-1.5 text-[13px] leading-5 text-muted-foreground sm:hidden">
+          <span className="shrink-0 whitespace-nowrap">{activity}</span>
+          {title && (
+            <>
+              <span aria-hidden>·</span>
+              <span title={title} className="min-w-0 truncate">{title}</span>
+            </>
+          )}
+        </p>
+
         {/* Line two below lg: when it was used, and what can be done. */}
-        <div className="flex min-w-0 items-center justify-between gap-2 lg:contents">
-          <span className="min-w-0 truncate text-[13px] leading-5 text-muted-foreground">
-            {grant.lastActivity ? <TimeAgo at={grant.lastActivity} prefix="Used" /> : 'No activity'}
+        <div className="flex min-w-0 flex-wrap items-center justify-between gap-x-2 sm:flex-nowrap lg:contents">
+          <span className="shrink-0 text-[13px] leading-5 whitespace-nowrap text-muted-foreground max-sm:hidden lg:min-w-0 lg:truncate">
+            {activity}
           </span>
 
-          <div className="flex shrink-0 items-center gap-1 lg:contents">
+          <div className="flex shrink-0 items-center gap-1 max-sm:w-full lg:contents">
             <span id={scopeId} className="sr-only">
-              {keptId !== undefined ? `Rule #${keptId} assigns ${grant.target} to this agent again automatically.` : `Creates a rule: ${scope}.`}
+              {copy ? copy.spoken : `Creates a rule: ${scope}.`}
             </span>
             <Tooltip>
               <TooltipTrigger asChild>
@@ -124,32 +180,30 @@ export function GrantRow({ agent, grant, pool, onChanged, onShowRule, onRevoked 
                   variant="ghost"
                   size="sm"
                   aria-describedby={scopeId}
-                  disabled={keptId === undefined && (busy !== null || pool === null)}
-                  onClick={() => (keptId !== undefined ? onShowRule(keptId) : void keep())}
+                  disabled={!linked && (busy !== null || pool === null)}
+                  onClick={() => (linked ? onShowRule(linked.id) : void keep())}
                   className={cn(
-                    'px-2 lg:justify-self-start',
-                    keptId !== undefined
+                    'px-2 max-sm:-ml-2 max-sm:mr-auto lg:justify-self-start',
+                    linked && linked.state !== 'spent'
                       ? 'text-live hover:bg-live-surface hover:text-live'
                       : 'text-muted-foreground hover:text-foreground',
                   )}
                 >
-                  {keptId !== undefined ? (
+                  {copy && linked ? (
                     <>
-                      <Repeat aria-hidden className="size-3.5" />
-                      Auto · rule #{keptId}
+                      {linked.state === 'reusable' && <Repeat aria-hidden className="size-3.5" />}
+                      {linked.state === 'once' && <Repeat1 aria-hidden className="size-3.5" />}
+                      {copy.label}
                     </>
                   ) : busy === 'keep' ? (
                     'Saving…'
                   ) : (
-                    <>
-                      <span className="sm:hidden">Auto-assign</span>
-                      <span className="max-sm:hidden">Auto-assign next time</span>
-                    </>
+                    'Auto-assign next time'
                   )}
                 </Button>
               </TooltipTrigger>
               <TooltipContent side="top" className="max-w-64">
-                {keptId !== undefined ? `Rule #${keptId} assigns it again. Open in Rules.` : scope}
+                {copy ? `${copy.detail} Open in Rules.` : scope}
               </TooltipContent>
             </Tooltip>
 
@@ -176,6 +230,11 @@ export function GrantRow({ agent, grant, pool, onChanged, onShowRule, onRevoked 
               <ChevronDown aria-hidden className={cn('transition-transform', open && 'rotate-180')} />
             </Button>
           </div>
+
+          {/* Phones have no hover: say what the rule would cover before it is made. */}
+          {!linked && pool !== null && (
+            <p aria-hidden className="basis-full text-xs leading-4 text-muted-foreground sm:hidden">{scope}</p>
+          )}
         </div>
       </div>
 
@@ -190,7 +249,7 @@ export function GrantRow({ agent, grant, pool, onChanged, onShowRule, onRevoked 
                 ['Kind', grant.kind === 'window' ? 'Window' : 'Pane'],
                 ['Title', title || <span className="text-muted-foreground">None</span>],
                 ['Label', grant.label, true],
-                ['Auto-assign', keptId !== undefined ? `Rule #${keptId} assigns it again.` : keepDefaults(agent.identity)],
+                ['Auto-assign', copy ? copy.detail : keepDefaults(agent.identity)],
               ]}
             />
           </div>

@@ -123,6 +123,9 @@ function SettingsMenu({ session, theme, onTheme, onSignedOut }: {
 
 export interface NavCounts {
   requests: number | null;
+  /** Requests with less than ten minutes left, and those with less than two. */
+  expiring?: number;
+  urgent?: number;
   agents: number | null;
   rules: number | null;
 }
@@ -143,6 +146,8 @@ export function AppShell({ session, connection, wasLive, counts, theme, onTheme,
   }, [counts.requests]);
 
   const waiting = counts.requests ?? 0;
+  const urgent = (counts.urgent ?? 0) > 0;
+  const expiring = counts.expiring ?? 0;
 
   return (
     <div className="min-h-dvh">
@@ -155,10 +160,16 @@ export function AppShell({ session, connection, wasLive, counts, theme, onTheme,
           {waiting > 0 && (
             <a
               href="#requests"
-              className="inline-flex items-center gap-1.5 rounded-full bg-warning-surface px-2.5 py-1 text-xs font-semibold text-warning ring-1 ring-inset ring-warning-border/50 hover:ring-warning-border max-sm:min-h-9"
+              className={cn(
+                'inline-flex items-center gap-1.5 rounded-full px-2.5 py-1 text-xs font-semibold ring-1 ring-inset max-sm:min-h-9',
+                urgent
+                  ? 'bg-urgent-surface text-destructive ring-destructive/40 hover:ring-destructive'
+                  : 'bg-warning-surface text-warning ring-warning-border/50 hover:ring-warning-border',
+              )}
             >
-              <span aria-hidden className="size-1.5 animate-pulse rounded-full bg-warning-border" />
+              <span aria-hidden className={cn('size-1.5 animate-pulse rounded-full', urgent ? 'bg-destructive' : 'bg-warning-border')} />
               {waiting} waiting
+              {expiring > 0 && <span className="font-medium max-[420px]:hidden">· {expiring} expiring</span>}
             </a>
           )}
           <div className="ml-auto flex items-center gap-2 sm:gap-3">

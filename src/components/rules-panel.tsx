@@ -55,7 +55,7 @@ function RuleRow({ rule, order, busy, highlighted, onEdit, onClone, onReset, onD
         highlighted && 'bg-highlight',
       )}
     >
-      <td className="py-3 pl-4 text-xs leading-5 text-muted-foreground tabular-nums">{order}</td>
+      <td className="py-3 pl-4 font-mono text-[13px] leading-5 font-semibold text-foreground tabular-nums">{order}</td>
       <td className="px-3 py-3">
         <TargetValue rule={rule} dim={spent} />
         <span className="block text-xs leading-4 text-muted-foreground">{kindLine(rule)}</span>
@@ -70,18 +70,15 @@ function RuleRow({ rule, order, busy, highlighted, onEdit, onClone, onReset, onD
         <div className="flex flex-col items-start gap-1">
           <StatusTag rule={rule} />
           <LastUsed rule={rule} />
+          {spent && <ResetButton rule={rule} busy={busy} onReset={onReset} className="mt-0.5" />}
         </div>
       </td>
       <td className="py-2.5 pr-3 pl-1">
         <div className="flex items-center justify-end gap-0.5">
-          {spent && <ResetButton rule={rule} busy={busy} onReset={onReset} className="mr-1" />}
           <Button variant="ghost" size="xs" data-rule-edit disabled={busy} onClick={() => onEdit(rule)} aria-label={`Edit rule ${rule.id}`}>
             Edit
           </Button>
-          <Button variant="ghost" size="xs" disabled={busy} onClick={() => onClone(rule)} aria-label={`Clone rule ${rule.id}`}>
-            Clone
-          </Button>
-          <RuleMenu rule={rule} busy={busy} onReset={onReset} onDelete={onDelete} />
+          <RuleMenu rule={rule} busy={busy} onClone={onClone} onReset={onReset} onDelete={onDelete} />
         </div>
       </td>
     </tr>
@@ -101,14 +98,17 @@ function RuleRecord({ rule, order, busy, highlighted, onEdit, onClone, onReset, 
       )}
     >
       <div className="flex items-start gap-3">
-        <span className="w-4 shrink-0 pt-px text-xs leading-5 text-muted-foreground tabular-nums" aria-hidden>{order}</span>
+        <span className="w-5 shrink-0 pt-px font-mono text-[13px] leading-5 font-semibold text-foreground tabular-nums" aria-hidden>{order}</span>
         <div className="min-w-0 flex-1">
-          <TargetValue rule={rule} dim={spent} />
-          <p className="text-xs leading-4 text-muted-foreground">
-            {kindLine(rule)} · <LastUsed rule={rule} />
+          <div className="flex flex-wrap items-center gap-x-2 gap-y-1">
+            <TargetValue rule={rule} dim={spent} />
+            <span className="text-xs leading-4 text-muted-foreground">{kindLine(rule)}</span>
+          </div>
+          <p className="mt-1 flex flex-wrap items-center gap-x-2 gap-y-1 text-xs leading-4 text-muted-foreground">
+            <StatusTag rule={rule} />
+            <LastUsed rule={rule} />
           </p>
         </div>
-        <StatusTag rule={rule} />
         <RuleMenu rule={rule} busy={busy} onReset={onReset} onDelete={onDelete} className="-mt-1 -mr-2 max-sm:-my-2.5" />
       </div>
       <dl className="m-0 grid grid-cols-2 gap-x-4 gap-y-2 pl-7">
@@ -139,6 +139,17 @@ function RuleRecord({ rule, order, busy, highlighted, onEdit, onClone, onReset, 
   );
 }
 
+/**
+ * Where focus goes back after the editor closes. A menu item is gone by then,
+ * so an action picked from a row menu returns to that menu's button.
+ */
+function returnPoint(): HTMLElement | null {
+  const active = document.activeElement;
+  if (!(active instanceof HTMLElement)) return null;
+  const trigger = active.closest('[role="menu"]')?.getAttribute('aria-labelledby');
+  return (trigger && document.getElementById(trigger)) || active;
+}
+
 export function RulesPanel({ pool, agents, stale, focus, onRefresh }: {
   pool: Pool;
   agents: ConnectedAgent[];
@@ -164,7 +175,7 @@ export function RulesPanel({ pool, agents, stale, focus, onRefresh }: {
   const shown = session ?? lastSession.current;
 
   const open = (next: Omit<EditorSession, 'nonce'>) => {
-    origin.current = document.activeElement instanceof HTMLElement ? document.activeElement : null;
+    origin.current = returnPoint();
     returnTo.current = null;
     setSession({ ...next, nonce: ++nonce.current });
   };
@@ -293,15 +304,22 @@ export function RulesPanel({ pool, agents, stale, focus, onRefresh }: {
         <Panel className="overflow-hidden">
           <table className="hidden w-full table-fixed border-collapse lg:table">
             <caption className="sr-only">Automatic rules in matching order. The first matching rule answers.</caption>
+            {/*
+              Order, Status and Actions keep fixed widths. The conditions share
+              what is left: these percentages sum to 54% and Path takes the
+              rest, which still fits a 1024px viewport (about 960px of table:
+              272px fixed, 518px for the four, about 170px for Path). Values
+              wrap rather than push the actions out.
+            */}
             <colgroup>
               <col style={{ width: 44 }} />
-              <col style={{ width: '17%' }} />
-              <col style={{ width: '12%' }} />
-              <col style={{ width: '19%' }} />
-              <col style={{ width: '11%' }} />
+              <col style={{ width: '16%' }} />
               <col style={{ width: '13%' }} />
-              <col style={{ width: 132 }} />
-              <col style={{ width: 216 }} />
+              <col />
+              <col style={{ width: '11%' }} />
+              <col style={{ width: '14%' }} />
+              <col style={{ width: 136 }} />
+              <col style={{ width: 92 }} />
             </colgroup>
             <thead className="bg-muted/60">
               <tr>

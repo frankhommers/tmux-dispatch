@@ -1,4 +1,4 @@
-import { MoreHorizontal, RotateCcw, Trash2 } from 'lucide-react';
+import { Copy, MoreHorizontal, RotateCcw, Trash2 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import {
   DropdownMenu,
@@ -31,14 +31,19 @@ export function conditionText(rule: PoolEntry, element: Element): { text: string
   return { text: short, full: value };
 }
 
+/** Line-break chances after separators, so a path wraps at a slash rather than mid-name. */
+function breakable(text: string) {
+  return text.split(/(?<=[/.:_-])/).flatMap((part, index) => (index === 0 ? [part] : [<wbr key={index} />, part]));
+}
+
 /** A condition value as plain text. Display only: the editor has the exact value. */
 export function ConditionValue({ rule, element, className }: { rule: PoolEntry; element: Element; className?: string }) {
   const { text, full } = conditionText(rule, element);
   if (full === null) return <span className={cn('text-[13px] leading-[18px] text-muted-foreground', className)}>{text}</span>;
   return (
-    <span title={full !== text ? full : undefined} className={cn('font-mono text-[13px] leading-[18px] break-anywhere select-text', className)}>
+    <span title={full !== text ? full : undefined} className={cn('font-mono text-[13px] leading-[18px] [overflow-wrap:break-word] select-text', className)}>
       {full !== text && <span className="sr-only">{full}</span>}
-      <span aria-hidden={full !== text ? true : undefined}>{text}</span>
+      <span aria-hidden={full !== text ? true : undefined}>{breakable(text)}</span>
     </span>
   );
 }
@@ -104,14 +109,19 @@ export function ResetButton({ rule, busy, onReset, className }: {
   );
 }
 
-/** The less frequent row actions. Edit and Clone stay visible beside it. */
-export function RuleMenu({ rule, busy, onReset, onDelete, className }: {
+/**
+ * The less frequent row actions. Clone sits here on wide screens; narrow
+ * records show it as a button instead, so they pass no onClone.
+ */
+export function RuleMenu({ rule, busy, onClone, onReset, onDelete, className }: {
   rule: PoolEntry;
   busy: boolean;
+  onClone?: (rule: PoolEntry) => void;
   onReset: (rule: PoolEntry) => void;
   onDelete: (rule: PoolEntry) => void;
   className?: string;
 }) {
+  const spent = isSpent(rule);
   return (
     <DropdownMenu modal={false}>
       <DropdownMenuTrigger asChild>
@@ -125,15 +135,21 @@ export function RuleMenu({ rule, busy, onReset, onDelete, className }: {
           <MoreHorizontal />
         </Button>
       </DropdownMenuTrigger>
-      <DropdownMenuContent>
+      <DropdownMenuContent align="end">
         <DropdownMenuLabel>Rule #{rule.id}</DropdownMenuLabel>
-        {isSpent(rule) && (
+        {onClone && (
+          <DropdownMenuItem onSelect={() => onClone(rule)}>
+            <Copy aria-hidden />
+            Clone
+          </DropdownMenuItem>
+        )}
+        {spent && (
           <DropdownMenuItem onSelect={() => onReset(rule)}>
             <RotateCcw aria-hidden />
             Reset for one use
           </DropdownMenuItem>
         )}
-        {isSpent(rule) && <DropdownMenuSeparator />}
+        {(onClone || spent) && <DropdownMenuSeparator />}
         <DropdownMenuItem variant="destructive" onSelect={() => onDelete(rule)}>
           <Trash2 aria-hidden />
           Delete rule…

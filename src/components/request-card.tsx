@@ -178,17 +178,18 @@ export function RequestCard({ request, headingId, onChanged, onActed }: Props) {
       <article aria-labelledby={headingId}>
         <div className="grid gap-1.5 bg-warning-surface/60 px-4 pt-3 pb-3">
           <div className="flex flex-wrap items-center justify-between gap-x-4 gap-y-1.5">
-            <div className="flex min-w-0 flex-wrap items-center gap-x-1.5 gap-y-1 text-[13px]">
+            <div className="flex min-w-0 flex-wrap items-baseline gap-x-1.5 gap-y-0.5 text-[13px]">
               {agent ? (
                 <>
-                  <strong className="text-sm font-semibold">{project ?? clientName(agent)}</strong>
-                  {project && <span className="text-muted-foreground">· {clientName(agent)}</span>}
-                  <span className="text-muted-foreground" title={agent.host}>· {shortHost(agent.host)}</span>
+                  <strong className="text-sm font-semibold max-sm:basis-full">{project ?? clientName(agent)}</strong>
+                  <span className="text-muted-foreground">
+                    <span className="max-sm:hidden">· </span>{project ? `${clientName(agent)} · ` : ''}<span title={agent.host}>{shortHost(agent.host)}</span>
+                  </span>
                 </>
               ) : (
                 <span className="text-muted-foreground">Agent identity unavailable</span>
               )}
-              <Tag tone="neutral" className="ml-1">{Noun}</Tag>
+              <Tag tone="neutral" className="ml-1 self-center">{Noun}</Tag>
             </div>
             <div className="flex items-center gap-2 text-xs text-muted-foreground">
               <span>{ageLabel(request.ageSeconds)}</span>
@@ -361,6 +362,7 @@ export function RequestCard({ request, headingId, onChanged, onActed }: Props) {
                 ['PID', agent ? String(agent.pid) : <NotReported />, true],
                 ['Instance', agent?.instanceId ?? <NotReported />, true],
                 ['Suggested', request.suggested ?? 'None', true],
+                ['Selected', selected ? request.candidates.find(candidate => candidate.id === selected)?.label ?? selected : 'None', true],
                 ['Age', ago(request.createdAt)],
               ]}
             />

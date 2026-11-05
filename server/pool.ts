@@ -60,15 +60,19 @@ export interface PoolMatchResult {
  * First entry that matches, in the order the human listed them. A target in
  * `held` belongs to another agent already: handing it out again would give one
  * pane to two agents, so the human is asked instead.
+ *
+ * An agent that names the pane it wants has said which one: a rule may hand
+ * that one over, but never another that happens to match first.
  */
 export function findPoolMatch(
   entries: PoolEntry[],
   candidates: WireCandidate[],
   kind: 'pane' | 'window',
   asker?: Asker,
-  held: ReadonlySet<string> = new Set()
+  held: ReadonlySet<string> = new Set(),
+  suggested?: string
 ): PoolMatchResult | null {
-  const free = candidates.filter(c => !held.has(c.id));
+  const free = candidates.filter(c => !held.has(c.id) && (suggested === undefined || c.id === suggested));
   for (const entry of entries) {
     const candidate = free.find(c => entryMatches(entry, c, kind, asker));
     if (candidate) return { entry, candidate };

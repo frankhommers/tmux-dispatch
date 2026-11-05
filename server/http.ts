@@ -7,7 +7,7 @@ import { WebSocketServer } from 'ws';
 
 import type { Config } from './config.js';
 import { Store } from './db.js';
-import { AgentRegistry, parseTmuxServer } from './agents.js';
+import { AgentRegistry, parseTmuxServer, sameMachine } from './agents.js';
 import { Pairings } from './devices.js';
 import { findPoolMatch } from './pool.js';
 import {
@@ -105,11 +105,18 @@ export async function startService(config: Config): Promise<Service> {
         store.setPoolHost(accountId, entry.id, host);
         continue;
       }
-      if (entry.host !== host) continue;
+      if (!sameMachine(entry.host, host)) continue;
       const theirs = parseTmuxServer(entry.tmuxServer ?? undefined);
       if (theirs && theirs.socket === socket && theirs.startedAt < startedAt) {
         store.removePoolEntry(accountId, entry.id);
       }
+    }
+  });
+  // A tmux server that is simply gone: every rule naming one of its ids on
+  // that machine is void, just as after a restart.
+  agents.on('tmux-gone', ({ accountId, host, tmuxServer }: { accountId: number; host: string; tmuxServer: string }) => {
+    for (const entry of store.listPool(accountId)) {
+      if (entry.tmuxServer === tmuxServer && sameMachine(entry.host, host)) store.removePoolEntry(accountId, entry.id);
     }
   });
   const pairings = new Pairings();
@@ -135,7 +142,7 @@ export async function startService(config: Config): Promise<Service> {
       tmuxServer: identity?.tmuxServer ?? '',
       host: identity?.host,
       sessionId: identity?.sessionId,
-    }, agents.heldByOthers(accountId, request.id));
+    }, agents.heldByOthers(accountId, request.id), request.suggested);
     if (!match) {
       broadcast(accountId, 'request', { id: request.id, reason: request.reason });
       return;

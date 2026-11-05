@@ -12,7 +12,7 @@ import { startService } from '../server-dist/http.js';
 import { localAccount } from '../server-dist/auth.js';
 import { parseAgentMessage } from '../server-dist/protocol.js';
 
-const PROTOCOL_VERSION = '1.7';
+const PROTOCOL_VERSION = '1.8';
 
 test('malformed inventory validation is ignored', () => {
   const frame = { type: 'validation', id: 'v-1', tmuxServer: '/socket:1:100', missing: ['%3', '@4'] };
@@ -1728,5 +1728,122 @@ test('single elements of a rule can be rebound, and matching follows', async () 
       body: JSON.stringify({ cwd: null }),
     });
     assert.equal(missing.status, 404);
+  });
+});
+
+test('a rule never hands out another pane than the one the agent asked for', async () => {
+  await withService({}, async ({ url, config, service }) => {
+    const account = localAccount(service.store);
+    service.store.addPoolEntry(account.id, '*dev:server*', 'pane', true);
+    const agent = connectAgent(url, config.token);
+    try {
+      await agent.waitFor('welcome');
+      agent.send({ ...REQUEST, id: 'r-want3', suggested: '%3' });
+      await settle();
+      assert.equal(agent.received.some(m => m.type === 'answer'), false,
+        'the rule matches %5, but the agent asked for %3: a human decides');
+      assert.equal((await inbox(url, config)).requests.length, 1);
+    } finally {
+      agent.close();
+    }
+  });
+});
+
+test('a rule that covers the asked-for pane answers with that pane', async () => {
+  await withService({}, async ({ url, config, service }) => {
+    const account = localAccount(service.store);
+    service.store.addPoolEntry(account.id, '*', 'pane', true);
+    const agent = connectAgent(url, config.token);
+    try {
+      await agent.waitFor('welcome');
+      agent.send({ ...REQUEST, id: 'r-want5', suggested: '%5' });
+      const answer = await agent.waitFor('answer');
+      assert.equal(answer.target, '%5', 'any-pane rule, but %5 was asked for, not the first candidate');
+    } finally {
+      agent.close();
+    }
+  });
+});
+
+test('a restarted tmux server is recognised when the network renamed the machine', async () => {
+  await withService({}, async ({ url, config, service }) => {
+    const account = localAccount(service.store);
+    const OLD = '/private/tmp/tmux-501/default:6002:1793028578';
+    service.store.addPoolEntry(account.id, '%5', 'pane', true, { host: 'Franks-MBP16.local', tmuxServer: OLD });
+    const old = connectAgent(url, config.token, { host: 'Franks-MBP16.local', tmuxServer: OLD });
+    await old.waitFor('welcome');
+    old.send({ type: 'grants', grants: [GRANT] });
+    await settle();
+    old.close();
+    await settle();
+
+    const fresh = connectAgent(url, config.token, {
+      host: 'Franks-MBP16.hommers.local', tmuxServer: '/private/tmp/tmux-501/default:4485:1793774769',
+    });
+    try {
+      await fresh.waitFor('welcome');
+      await settle();
+      assert.deepEqual((await inbox(url, config)).agents.map(a => a.identity.host), ['Franks-MBP16.hommers.local'],
+        'the same Mac on another network is still the same machine');
+      assert.deepEqual(await rules(url, config), [], 'its rule on the old tmux server goes too');
+    } finally {
+      fresh.close();
+    }
+  });
+});
+
+test('an agent whose tmux server is gone takes every assignment on it along', async () => {
+  await withService({}, async ({ url, config, service }) => {
+    const account = localAccount(service.store);
+    const GONE = '/private/tmp/tmux-501/default:100:1000';
+    service.store.addPoolEntry(account.id, '%3', 'pane', true, { host: 'test', tmuxServer: GONE });
+    service.store.addPoolEntry(account.id, '%3', 'pane', true, { host: 'elsewhere', tmuxServer: GONE });
+
+    const sleeper = connectAgent(url, config.token, { tmuxServer: GONE });
+    await sleeper.waitFor('welcome');
+    sleeper.send({ type: 'grants', grants: [GRANT] });
+    const remote = connectAgent(url, config.token, { host: 'elsewhere', tmuxServer: GONE });
+    await remote.waitFor('welcome');
+    remote.send({ type: 'grants', grants: [GRANT] });
+    await settle();
+    sleeper.close();
+    remote.close();
+    await settle();
+    assert.equal((await inbox(url, config)).agents.length, 2);
+
+    // tmux is gone and nothing has restarted it: no newer server proves it.
+    const witness = connectAgent(url, config.token, { tmuxServer: undefined });
+    try {
+      await witness.waitFor('welcome');
+      witness.send({ type: 'tmux-gone', tmuxServer: GONE });
+      await settle();
+      const left = (await inbox(url, config)).agents;
+      assert.deepEqual(left.filter(a => a.grants.length > 0).map(a => a.identity.host), ['elsewhere'],
+        'only this machine\'s tmux server is gone');
+      assert.deepEqual((await rules(url, config)).map(r => r.host), ['elsewhere']);
+    } finally {
+      witness.close();
+    }
+  });
+});
+
+test('a connected agent on a tmux server that is gone loses what it holds there', async () => {
+  await withService({}, async ({ url, config }) => {
+    const GONE = '/private/tmp/tmux-501/default:100:1000';
+    const holder = connectAgent(url, config.token, { tmuxServer: GONE });
+    const witness = connectAgent(url, config.token, { tmuxServer: undefined });
+    try {
+      await holder.waitFor('welcome');
+      holder.send({ type: 'grants', grants: [GRANT] });
+      await witness.waitFor('welcome');
+      await settle();
+      witness.send({ type: 'tmux-gone', tmuxServer: GONE });
+      await settle();
+      const agents = (await inbox(url, config)).agents;
+      assert.deepEqual(agents.flatMap(a => a.grants), [], 'a pane id on a dead server points at nothing');
+    } finally {
+      holder.close();
+      witness.close();
+    }
   });
 });

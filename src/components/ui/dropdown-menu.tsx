@@ -1,4 +1,5 @@
 import * as React from "react"
+import { CheckIcon } from "lucide-react"
 import { DropdownMenu as DropdownMenuPrimitive } from "radix-ui"
 
 import { cn } from "@/lib/utils"
@@ -60,7 +61,31 @@ function DropdownMenuSeparator({ className, ...props }: React.ComponentProps<typ
   return <DropdownMenuPrimitive.Separator className={cn("-mx-1 my-1 h-px bg-border", className)} {...props} />
 }
 
+const DropdownMenuRadioGroup = DropdownMenuPrimitive.RadioGroup
+
+function DropdownMenuRadioItem({ className, children, ...props }: React.ComponentProps<typeof DropdownMenuPrimitive.RadioItem>) {
+  return (
+    <DropdownMenuPrimitive.RadioItem
+      className={cn(
+        "relative flex cursor-pointer items-center gap-2 rounded-sm py-1.5 pr-8 pl-2 text-sm outline-none select-none max-sm:min-h-11",
+        "focus:bg-accent focus:text-accent-foreground [&_svg]:size-4 [&_svg]:shrink-0",
+        className
+      )}
+      {...props}
+    >
+      {children}
+      <span className="absolute right-2 flex items-center">
+        <DropdownMenuPrimitive.ItemIndicator>
+          <CheckIcon />
+        </DropdownMenuPrimitive.ItemIndicator>
+      </span>
+    </DropdownMenuPrimitive.RadioItem>
+  )
+}
+
 export {
+  DropdownMenuRadioGroup,
+  DropdownMenuRadioItem,
   DropdownMenu,
   DropdownMenuContent,
   DropdownMenuItem,

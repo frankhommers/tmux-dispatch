@@ -10,6 +10,7 @@ import {
   DialogTitle,
 } from '@/components/ui/dialog';
 import { describe } from '@/lib/errors';
+import { absolute, ago, shortPath } from '@/lib/format';
 import { cn } from '@/lib/utils';
 
 export const inputClass =
@@ -22,6 +23,73 @@ export function Panel({ className, children, ...props }: React.ComponentProps<'d
   return (
     <div className={cn('min-w-0 rounded-lg border border-border bg-card text-card-foreground', className)} {...props}>
       {children}
+    </div>
+  );
+}
+
+export type Tone = 'neutral' | 'attention' | 'urgent' | 'live' | 'muted';
+
+const TONE: Record<Tone, string> = {
+  neutral: 'bg-secondary text-secondary-foreground',
+  attention: 'bg-warning-surface text-warning ring-1 ring-inset ring-warning-border/40',
+  urgent: 'bg-urgent-surface text-destructive ring-1 ring-inset ring-destructive/30',
+  live: 'bg-live-surface text-live',
+  muted: 'bg-transparent text-muted-foreground ring-1 ring-inset ring-border',
+};
+
+/** A small label with a meaning: amber needs a decision, red is urgent, green is live. */
+export function Tag({ tone = 'neutral', className, children, ...props }: React.ComponentProps<'span'> & { tone?: Tone }) {
+  return (
+    <span
+      className={cn('inline-flex shrink-0 items-center gap-1 rounded px-1.5 text-xs leading-5 font-medium whitespace-nowrap', TONE[tone], className)}
+      {...props}
+    >
+      {children}
+    </span>
+  );
+}
+
+/** A status dot; always next to text that says the same thing. */
+export function Dot({ tone }: { tone: 'live' | 'offline' | 'attention' }) {
+  return (
+    <span
+      aria-hidden
+      className={cn(
+        'inline-block size-2 shrink-0 rounded-full',
+        tone === 'live' && 'bg-live',
+        tone === 'offline' && 'border border-muted-foreground',
+        tone === 'attention' && 'bg-warning-border',
+      )}
+    />
+  );
+}
+
+/** A relative time that tells the exact moment on hover and to assistive tech. */
+export function TimeAgo({ at, prefix, className }: { at: number; prefix?: string; className?: string }) {
+  return (
+    <time dateTime={new Date(at).toISOString()} title={absolute(at)} className={className}>
+      {prefix ? `${prefix} ` : ''}{ago(at)}
+    </time>
+  );
+}
+
+/** A working directory, shortened to what tells projects apart; the full path on hover and in selection. */
+export function PathText({ path, className }: { path: string; className?: string }) {
+  const short = shortPath(path);
+  return (
+    <code title={path} className={cn('font-mono text-xs text-muted-foreground select-text break-anywhere', className)}>
+      {short !== path && <span className="sr-only">{path}</span>}
+      <span aria-hidden={short !== path ? true : undefined}>{short}</span>
+    </code>
+  );
+}
+
+/** The one line at the top of a tab: what this is for, and what can be done. */
+export function PanelToolbar({ children, actions }: { children: ReactNode; actions?: ReactNode }) {
+  return (
+    <div className="mb-3 flex flex-wrap items-center justify-between gap-x-4 gap-y-2">
+      <p className="min-w-0 text-[13px] leading-[18px] text-muted-foreground">{children}</p>
+      {actions && <div className="flex flex-wrap items-center gap-2">{actions}</div>}
     </div>
   );
 }
@@ -41,7 +109,7 @@ export function SectionHeader({ id, title, count, description, actions }: {
   return (
     <div className="mb-3 flex flex-wrap items-start justify-between gap-3">
       <div className="min-w-0">
-        <h2 id={id} tabIndex={-1} className="text-base leading-6 font-semibold">
+        <h2 id={id} tabIndex={-1} className="text-lg leading-[26px] font-semibold">
           {title}
           {count !== undefined && count !== null && <Count>{count}</Count>}
         </h2>

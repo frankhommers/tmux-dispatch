@@ -1,9 +1,11 @@
-import { useEffect, useRef, useState } from 'react';
-import { AlertTriangle } from 'lucide-react';
+import { useEffect, useMemo, useRef, useState } from 'react';
+import { AlertTriangle, Info } from 'lucide-react';
 import { toast } from 'sonner';
 import { Button } from '@/components/ui/button';
 import { DialogDescription, DialogTitle } from '@/components/ui/dialog';
-import { DetailList, Disclosure, InlineError, inputClass, selectClass } from '@/components/common';
+import { DetailList, Disclosure, InlineError, TimeAgo, selectClass, type DetailItem } from '@/components/common';
+import { ConditionRow, fieldId, modeId } from '@/components/rules/condition-row';
+import { LastUsed, ServerState } from '@/components/rules/rule-cells';
 import {
   addPoolEntry,
   removePoolEntry,
@@ -12,15 +14,14 @@ import {
   type PoolEntry,
 } from '@/lib/api';
 import { describe, status } from '@/lib/errors';
-import { absolute, ago } from '@/lib/format';
+import { day, shortHost } from '@/lib/format';
 import { clientName, projectOf } from '@/lib/identity';
 import {
   ELEMENTS,
   LABEL,
-  anyLabel,
   draftFromRule,
   emptyDraft,
-  findSame,
+  findDuplicate,
   sameDraft,
   sameRecord,
   summarize,
@@ -39,30 +40,29 @@ export type EditorMode = { type: 'add' } | { type: 'edit'; id: number } | { type
 export interface EditorSession {
   nonce: number;
   mode: EditorMode;
-  /** The condition to focus first, when opened from a cell. */
-  focus?: Element;
   /** Start from this draft instead of the rule's values. */
   seed?: Draft;
 }
 
 export type EditorOutcome = { action: 'added' | 'saved'; entry: PoolEntry } | { action: 'deleted'; id: number };
 
-const fieldId = (element: Element, part: 'mode' | 'value' | 'help' | 'error') => `rule-editor-${element}-${part}`;
+/**
+ * Where a freshly opened editor puts focus: Type for a new rule, the target's
+ * mode for an existing one (no keyboard popping up on a phone). Read from the
+ * DOM, so call it once the form has rendered.
+ */
+export function editorStartId(mode: EditorMode): string {
+  if (mode.type !== 'edit') return 'rule-editor-kind';
+  return document.querySelector<HTMLInputElement>('input[name="rule-editor-pattern-mode"]:checked')?.id ?? modeId('pattern', false);
+}
 
+/** How each condition matches, for the Pattern help disclosure. */
 const HELP: Record<Element, string> = {
-  pattern: 'ID or pattern. A bare ID like %24 or @5 matches exactly and needs its tmux server. Other text is an anchored, case-insensitive glob over the full label: * any text, ? one character. For example *agents:* matches a tmux session anywhere in the label.',
-  session: 'Exact value, case-sensitive. The agent session ID, not the tmux session name.',
-  cwd: 'Path or glob, case-insensitive, over the agent working directory. For example */Repos/tmux-*. Here * may cross slashes.',
-  host: 'Exact value, case-sensitive. The host name the agent reports.',
-  tmuxServer: 'Exact value. The full socket:pid:start_time fingerprint; the short :pid in the table is display only.',
-};
-
-const PLACEHOLDER: Record<Element, string> = {
-  pattern: '%24 or *agents:*',
-  session: 'Agent session ID',
-  cwd: '*/Repos/project',
-  host: 'Host name',
-  tmuxServer: '/tmp/tmux-501/default:4821:1781001000',
+  pattern: 'A bare ID like %24 or @5 matches exactly and needs its tmux server. Other text is an anchored, case-insensitive glob over the full tmux label: * any text, ? one character. *agents:* matches a tmux session anywhere in the label.',
+  session: 'Exact, case-sensitive. The agent session ID the agent reports, not the tmux session name.',
+  cwd: 'Path or glob over the agent working directory, case-insensitive. Here * may cross slashes: */Repos/tmux-* matches any depth.',
+  host: 'Exact, case-sensitive. The host name the agent reports.',
+  tmuxServer: 'Exact. The full socket:pid:start_time fingerprint; the short :pid in the table is display only. Easiest filled from an agent.',
 };
 
 type Confirm = null | { kind: 'discard'; then: () => void } | { kind: 'delete' };
@@ -86,8 +86,11 @@ function initialDraft(session: EditorSession, pool: PoolEntry[] | null): Draft {
   return source ? draftFromRule(source) : emptyDraft();
 }
 
+const fieldLabel = 'text-xs leading-4 font-medium';
+const fieldHelp = 'text-xs leading-4 text-muted-foreground';
+
 /**
- * Add, edit or clone one rule: five conditions, each Any or constrained,
+ * Add, edit or clone one rule: five conditions, each Any or limited,
  * validated before anything is sent. Rendered inside the dialog content the
  * rules panel owns, so switching between rules keeps the dialog open.
  */
@@ -104,16 +107,18 @@ export function RuleEditorForm({ session, pool, agents, onSwitch, onClose, onDon
   const [saveError, setSaveError] = useState<string | null>(null);
   const [busy, setBusy] = useState<'save' | 'delete' | null>(null);
   const [confirm, setConfirm] = useState<Confirm>(null);
-  const [duplicate, setDuplicate] = useState<PoolEntry | null>(null);
+  /** A duplicate the server reported that the loaded pool did not yet show: a race. */
+  const [raced, setRaced] = useState<PoolEntry | null>(null);
   const [stale, setStale] = useState(false);
   const [removed, setRemoved] = useState(editing !== null && pool !== null && baseRule === null);
   const [filledFrom, setFilledFrom] = useState<string | null>(null);
   const focusAfter = useRef<Element | null>(null);
   const confirmRef = useRef<HTMLButtonElement | null>(null);
-  const noticeRef = useRef<HTMLDivElement | null>(null);
 
   const dirty = !sameDraft(draft, baseline);
   const current = editing === null ? null : pool?.find(rule => rule.id === editing) ?? null;
+  const live = useMemo(() => findDuplicate(pool, draft, editing), [pool, draft, editing]);
+  const duplicate = live ?? raced;
 
   // Stale-edit detection, best effort: there is no revision token, so this
   // compares the fields the form edits against the snapshot it started from.
@@ -151,28 +156,28 @@ export function RuleEditorForm({ session, pool, agents, onSwitch, onClose, onDon
     if (confirm) confirmRef.current?.focus();
   }, [confirm]);
 
-  // A duplicate or a failed save is reported below the fields: bring it into view.
-  useEffect(() => {
-    if (duplicate || saveError) noticeRef.current?.scrollIntoView({ block: 'nearest' });
-  }, [duplicate, saveError]);
-
   const guard = (then: () => void) => {
     if (dirty && !removed) setConfirm({ kind: 'discard', then });
     else then();
   };
   closeGuard.current = () => guard(onClose);
 
+  const change = (next: Draft) => {
+    setRaced(null);
+    setDraft(next);
+  };
+
   const setCondition = (element: Element, patch: Partial<Draft['conditions'][Element]>) => {
-    setDuplicate(null);
-    setDraft(current => ({
-      ...current,
-      conditions: { ...current.conditions, [element]: { ...current.conditions[element], ...patch } },
+    setRaced(null);
+    setDraft(state => ({
+      ...state,
+      conditions: { ...state.conditions, [element]: { ...state.conditions[element], ...patch } },
     }));
   };
 
   const setMode = (element: Element, constrained: boolean) => {
     setCondition(element, { constrained });
-    // Back to Constrained with nothing typed: put the cursor where it is needed.
+    // Limited with nothing typed yet: put the cursor where it is needed.
     if (constrained && !draft.conditions[element].value) focusAfter.current = element;
   };
 
@@ -192,11 +197,10 @@ export function RuleEditorForm({ session, pool, agents, onSwitch, onClose, onDon
     setChecked(true);
     const first = ELEMENTS.find(element => found[element]);
     if (first) {
-      const target = draft.conditions[first].constrained ? fieldId(first, 'value') : fieldId(first, 'mode');
-      document.getElementById(target)?.focus();
+      document.getElementById(draft.conditions[first].constrained ? fieldId(first, 'value') : modeId(first, false))?.focus();
       return;
     }
-    if (stale || busy) return;
+    if (stale || busy || duplicate) return;
     setBusy('save');
     setSaveError(null);
     try {
@@ -213,17 +217,11 @@ export function RuleEditorForm({ session, pool, agents, onSwitch, onClose, onDon
         onDone({ action: 'saved', entry });
         return;
       }
-      const body = toNewEntry(draft);
-      const existing = pool ? findSame(pool, body) : undefined;
-      if (existing) {
-        setDuplicate(existing);
-        return;
-      }
       const known = new Set(pool?.map(rule => rule.id) ?? []);
-      const { entry } = await addPoolEntry(body);
+      const { entry } = await addPoolEntry(toNewEntry(draft));
       // A race: someone added the same rule since the last snapshot.
       if (known.has(entry.id)) {
-        setDuplicate(entry);
+        setRaced(entry);
         return;
       }
       toast.success(mode.type === 'clone' ? `Added rule #${entry.id}, cloned from #${mode.sourceId}` : `Added rule #${entry.id}`);
@@ -266,14 +264,14 @@ export function RuleEditorForm({ session, pool, agents, onSwitch, onClose, onDon
   if (removed) {
     return (
       <>
-        <div className="grid gap-2 p-6 max-sm:p-4">
+        <div className="grid gap-1 border-b border-border px-6 py-4 pr-14 max-sm:px-4 max-sm:pr-14">
           <DialogTitle>{title}</DialogTitle>
-          <DialogDescription>This rule was removed</DialogDescription>
-          <p className="text-sm">
-            Someone removed this rule while it was open. Your values are kept: use them to add a new rule, or close.
-          </p>
+          <DialogDescription className="text-[13px] leading-[18px]">This rule was removed</DialogDescription>
         </div>
-        <div className="flex flex-wrap justify-end gap-2 border-t border-border p-4 sm:px-6">
+        <p className="px-6 py-4 text-sm max-sm:px-4">
+          Someone removed this rule while it was open. Your values are kept: use them to add a new rule, or close.
+        </p>
+        <div className="flex flex-wrap justify-end gap-2 border-t border-border px-6 py-3 max-sm:px-4">
           <Button variant="outline" onClick={onClose}>Close</Button>
           <Button onClick={() => onSwitch({ mode: { type: 'add' }, seed: draft })}>Use as new rule</Button>
         </div>
@@ -282,210 +280,178 @@ export function RuleEditorForm({ session, pool, agents, onSwitch, onClose, onDon
   }
 
   const body = editing !== null && baseRule ? toPatch(baseRule, draft) : toNewEntry(draft);
+  const blocked = duplicate !== null && duplicate !== undefined;
 
   return (
     <>
-      <div className="grid gap-1 border-b border-border p-6 pr-14 max-sm:p-4 max-sm:pr-14">
+      <div className="grid gap-0.5 border-b border-border px-6 py-4 pr-14 max-sm:px-4 max-sm:pr-14">
         <DialogTitle>{title}</DialogTitle>
-        <DialogDescription className="text-xs">All conditions must match. Changes apply to future requests.</DialogDescription>
+        <DialogDescription className="text-[13px] leading-[18px]">
+          All conditions must match. Changes apply to future requests.
+        </DialogDescription>
+        {current && (
+          <p className="mt-1 flex flex-wrap items-center gap-x-3 gap-y-1 text-xs leading-4 text-muted-foreground">
+            <span>Created {day(current.createdAt)}</span>
+            <LastUsed rule={current} />
+            {current.lastActivity && <TimeAgo at={current.lastActivity} prefix="Active" />}
+            <ServerState rule={current} />
+          </p>
+        )}
       </div>
 
       <form
         id="rule-editor-form"
         noValidate
-        className="min-h-0 flex-1 overflow-y-auto px-6 py-4 max-sm:px-4"
+        className="grid min-h-0 flex-1 content-start gap-4 overflow-y-auto px-6 py-4 max-sm:px-4"
         onSubmit={event => { event.preventDefault(); void save(); }}
       >
         {stale && (
-          <div role="alert" className="mb-4 flex flex-wrap items-center gap-2 rounded-md border border-warning-border bg-warning-surface px-3 py-2 text-xs text-warning">
+          <div role="alert" className="flex flex-wrap items-center gap-2 rounded-md border border-warning-border bg-warning-surface px-3 py-2 text-xs text-warning">
             <AlertTriangle className="size-4" aria-hidden />
-            <span className="flex-1">This rule changed. Reload values before saving.</span>
+            <span className="flex-1">This rule changed elsewhere. Reload its values before saving.</span>
             <Button type="button" size="xs" variant="outline" className="text-foreground" onClick={reload}>Reload values</Button>
           </div>
         )}
 
-        <div className="grid gap-4 sm:grid-cols-2">
+        <div className={cn('grid grid-cols-2 gap-x-3 gap-y-3', agents.length > 0 && 'sm:grid-cols-[1fr_1fr_1.5fr]')}>
           <div className="grid content-start gap-1.5">
-            <label htmlFor="rule-editor-kind" className="text-xs font-medium">Type</label>
+            <label htmlFor="rule-editor-kind" className={fieldLabel}>Type</label>
             <select
               id="rule-editor-kind"
               value={draft.kind}
               disabled={editing !== null}
               aria-describedby={editing !== null ? 'rule-editor-kind-help' : undefined}
-              onChange={event => { setDuplicate(null); setDraft({ ...draft, kind: event.target.value === 'window' ? 'window' : 'pane' }); }}
+              onChange={event => change({ ...draft, kind: event.target.value === 'window' ? 'window' : 'pane' })}
               className={cn(selectClass, 'w-full')}
             >
               <option value="pane">Pane</option>
               <option value="window">Window</option>
             </select>
             {editing !== null && (
-              <p id="rule-editor-kind-help" className="text-xs text-muted-foreground">
-                The type of an existing rule cannot change.{' '}
+              <p id="rule-editor-kind-help" className={fieldHelp}>
+                Fixed for an existing rule.{' '}
                 <button
                   type="button"
-                  className="underline underline-offset-2 hover:no-underline"
+                  className="rounded-sm text-foreground underline underline-offset-2 hover:no-underline"
                   onClick={() => onSwitch({ mode: { type: 'clone', sourceId: editing }, seed: { ...draft, kind: otherKind } })}
                 >
-                  Clone as another type
+                  Clone as {otherKind}
                 </button>
               </p>
             )}
           </div>
           <div className="grid content-start gap-1.5">
-            <label htmlFor="rule-editor-use" className="text-xs font-medium">Use</label>
+            <label htmlFor="rule-editor-use" className={fieldLabel}>Use</label>
             <select
               id="rule-editor-use"
               value={draft.reusable ? 'reusable' : 'once'}
               aria-describedby="rule-editor-use-help"
-              onChange={event => { setDuplicate(null); setDraft({ ...draft, reusable: event.target.value === 'reusable' }); }}
+              onChange={event => change({ ...draft, reusable: event.target.value === 'reusable' })}
               className={cn(selectClass, 'w-full')}
             >
               <option value="reusable">Reusable</option>
               <option value="once">One-shot</option>
             </select>
-            <p id="rule-editor-use-help" className="text-xs text-muted-foreground">
+            <p id="rule-editor-use-help" className={fieldHelp}>
               {draft.reusable
                 ? 'Keeps answering matching requests.'
                 : current?.usedAt
-                  ? 'This rule was already used, so as one-shot it stays spent until you reset it.'
-                  : 'Answers one matching request, then waits for a reset.'}
+                  ? 'Already used: stays spent until you reset it.'
+                  : 'Answers one request, then waits for a reset.'}
             </p>
           </div>
-        </div>
-
-        {agents.length > 0 && (
-          <div className="mt-4 grid gap-1.5">
-            <label htmlFor="rule-editor-agent" className="text-xs font-medium">Use values from agent (optional)</label>
-            <select
-              id="rule-editor-agent"
-              value=""
-              aria-describedby="rule-editor-agent-help"
-              onChange={event => {
-                const agent = agents.find(candidate => candidate.id === event.target.value);
-                if (!agent) return;
-                setDuplicate(null);
-                setDraft(withAgent(draft, agent));
-                setFilledFrom(`${clientName(agent.identity)} on ${agent.identity.host}`);
-              }}
-              className={cn(selectClass, 'w-full')}
-            >
-              <option value="">Choose an agent…</option>
-              {agents.map(agent => (
-                <option key={agent.id} value={agent.id}>
-                  {clientName(agent.identity)} · {agent.identity.host} · {projectOf(agent.identity) ?? 'no path'}{agent.connected ? '' : ' (offline)'}
-                </option>
-              ))}
-            </select>
-            <p id="rule-editor-agent-help" className="text-xs text-muted-foreground" aria-live="polite">
-              {filledFrom
-                ? `Filled session, path, machine and server from ${filledFrom}. Anything it does not report stays Any.`
-                : 'Fills the four identity conditions. Never picks a target, and saves nothing by itself.'}
-            </p>
-          </div>
-        )}
-
-        <div className="mt-4">
-          {ELEMENTS.map(element => {
-            const condition = draft.conditions[element];
-            const error = errors[element];
-            return (
-              <div
-                key={element}
-                className="grid gap-x-3 gap-y-1.5 border-t border-border py-3 sm:grid-cols-[7.5rem_8.5rem_minmax(0,1fr)] sm:items-center"
+          {agents.length > 0 && (
+            <div className="col-span-2 grid content-start gap-1.5 sm:col-span-1">
+              <label htmlFor="rule-editor-agent" className={fieldLabel}>
+                Fill from agent <span className="font-normal text-muted-foreground">(optional)</span>
+              </label>
+              <select
+                id="rule-editor-agent"
+                value=""
+                aria-describedby="rule-editor-agent-help"
+                onChange={event => {
+                  const agent = agents.find(candidate => candidate.id === event.target.value);
+                  if (!agent) return;
+                  change(withAgent(draft, agent));
+                  setFilledFrom(`${clientName(agent.identity)} on ${shortHost(agent.identity.host)}`);
+                }}
+                className={cn(selectClass, 'w-full')}
               >
-                <label htmlFor={fieldId(element, condition.constrained ? 'value' : 'mode')} className="text-xs font-medium">
-                  {LABEL[element]}
-                </label>
-                <select
-                  id={fieldId(element, 'mode')}
-                  aria-label={`${LABEL[element]} mode`}
-                  value={condition.constrained ? 'constrained' : 'any'}
-                  onChange={event => setMode(element, event.target.value === 'constrained')}
-                  aria-invalid={!condition.constrained && error ? true : undefined}
-                  aria-describedby={error ? fieldId(element, 'error') : undefined}
-                  className={cn(selectClass, 'w-full')}
-                >
-                  <option value="any">Any</option>
-                  <option value="constrained">Constrained</option>
-                </select>
-                <input
-                  id={fieldId(element, 'value')}
-                  value={condition.constrained ? condition.value : ''}
-                  placeholder={condition.constrained ? PLACEHOLDER[element] : anyLabel(element, draft.kind)}
-                  disabled={!condition.constrained}
-                  onChange={event => setCondition(element, { value: event.target.value })}
-                  aria-invalid={condition.constrained && error ? true : undefined}
-                  aria-describedby={cn(fieldId(element, 'help'), error && fieldId(element, 'error'))}
-                  autoComplete="off"
-                  spellCheck={false}
-                  className={cn(inputClass, 'font-mono text-xs max-sm:text-sm')}
-                />
-                <p id={fieldId(element, 'help')} className="text-xs leading-[18px] text-muted-foreground sm:col-start-3">
-                  {HELP[element]}
-                </p>
-                {error && (
-                  <div className="sm:col-start-3">
-                    <InlineError id={fieldId(element, 'error')}>{error}</InlineError>
-                  </div>
-                )}
-              </div>
-            );
-          })}
+                <option value="">Choose an agent…</option>
+                {agents.map(agent => (
+                  <option key={agent.id} value={agent.id}>
+                    {projectOf(agent.identity) ?? 'No path'} · {clientName(agent.identity)} · {shortHost(agent.identity.host)}{agent.connected ? '' : ' (offline)'}
+                  </option>
+                ))}
+              </select>
+              <p id="rule-editor-agent-help" className={fieldHelp} aria-live="polite">
+                {filledFrom
+                  ? `Filled from ${filledFrom}. What it does not report stays Any.`
+                  : 'Fills session, path, machine and server. Never the target.'}
+              </p>
+            </div>
+          )}
         </div>
 
-        <div className="mt-2 rounded-md border border-border p-3 text-xs leading-[18px]">
-          <p className="font-medium">Scope</p>
-          <p className="mt-1 break-anywhere text-muted-foreground">{summarize(draft)}</p>
-          <Disclosure summary="Exact values" className="mt-2">
-            <pre className="m-0 overflow-x-auto rounded-sm bg-muted p-2 font-mono text-xs whitespace-pre-wrap break-anywhere select-text">
+        <fieldset className="m-0 min-w-0 border-0 p-0">
+          <legend className="mb-1.5 text-xs leading-4 font-medium">Conditions</legend>
+          <div className="divide-y divide-border rounded-md border border-border">
+            {ELEMENTS.map(element => (
+              <ConditionRow
+                key={element}
+                element={element}
+                condition={draft.conditions[element]}
+                kind={draft.kind}
+                error={errors[element]}
+                onMode={constrained => setMode(element, constrained)}
+                onValue={value => setCondition(element, { value })}
+              />
+            ))}
+          </div>
+          <Disclosure summary="Pattern help" className="mt-1.5">
+            <DetailList items={ELEMENTS.map((element): DetailItem => [LABEL[element], HELP[element]])} className="rounded-md bg-muted/60 p-3" />
+          </Disclosure>
+        </fieldset>
+
+        <section aria-labelledby="rule-editor-scope" className="rounded-md bg-muted/60 px-3 py-2.5">
+          <h3 id="rule-editor-scope" className="text-xs leading-4 font-medium text-muted-foreground">Scope</h3>
+          <p className="mt-1 text-[13px] leading-[18px] break-anywhere text-foreground">{summarize(draft)}</p>
+          <Disclosure summary={editing !== null ? 'Exact change' : 'Exact values'} className="mt-1">
+            <pre className="m-0 overflow-x-auto rounded-sm bg-card p-2 font-mono text-xs whitespace-pre-wrap break-anywhere select-text">
               {JSON.stringify(body, null, 2)}
             </pre>
           </Disclosure>
-        </div>
+        </section>
 
-        <div ref={noticeRef}>
-        {duplicate && (
-          <div role="alert" className="mt-4 grid gap-2 rounded-md border border-warning-border bg-warning-surface p-3 text-xs text-warning">
-            <p className="font-semibold">This rule already exists</p>
-            <p>
-              Rule #{duplicate.id} has the same type and conditions.{' '}
-              {duplicate.reusable !== draft.reusable
-                ? 'Only Use differs. Edit the existing rule to change it.'
-                : 'Change a condition or the type to create a distinct rule.'}
-            </p>
-            <div>
-              <Button
-                type="button"
-                size="sm"
-                variant="outline"
-                className="text-foreground"
-                onClick={() => guard(() => onSwitch({ mode: { type: 'edit', id: duplicate.id } }))}
-              >
-                Edit existing rule
-              </Button>
-            </div>
-          </div>
-        )}
-
-        {mode.type === 'edit' && current && (
-          <Disclosure summary="Rule details" className="mt-4">
-            <DetailList
-              items={[
-                ['Rule', `#${current.id}`],
-                ['Created', absolute(current.createdAt)],
-                ['Last handed over', current.usedAt ? `${absolute(current.usedAt)} (${ago(current.usedAt)})` : 'Not used'],
-                ['Last activity', current.lastActivity ? `${absolute(current.lastActivity)} (${ago(current.lastActivity)})` : 'No activity reported'],
-                ['Server', current.live === null ? 'No server bound' : current.live ? 'An agent on this server is connected' : 'No connected agent on this server'],
-              ]}
-            />
-          </Disclosure>
-        )}
-
-        {saveError && <div className="mt-4"><InlineError>{saveError}</InlineError></div>}
-        </div>
+        {saveError && <InlineError>{saveError}</InlineError>}
       </form>
 
-      <div className="border-t border-border p-4 sm:px-6">
+      <div className="grid gap-3 border-t border-border bg-card px-6 py-3 max-sm:px-4">
+        <div aria-live="polite" className="empty:hidden">
+          {blocked && !confirm && (
+            <div id="rule-editor-duplicate" className="flex items-start gap-2 rounded-md bg-muted/70 px-3 py-2 text-[13px] leading-[18px]">
+              <Info className="mt-px size-4 shrink-0 text-muted-foreground" aria-hidden />
+              <p className="min-w-0 flex-1">
+                <span className="font-medium">This rule already exists</span>
+                <span className="text-muted-foreground">
+                  {' — '}rule #{duplicate.id} has the same type and conditions.{' '}
+                  {duplicate.reusable !== draft.reusable
+                    ? `Only Use differs: edit rule #${duplicate.id} to change it.`
+                    : 'Change a condition to make a new rule.'}
+                </span>
+              </p>
+              <Button
+                type="button"
+                size="xs"
+                variant="outline"
+                className="-my-0.5"
+                onClick={() => guard(() => onSwitch({ mode: { type: 'edit', id: duplicate.id } }))}
+              >
+                Edit rule #{duplicate.id}
+              </Button>
+            </div>
+          )}
+        </div>
         {confirm?.kind === 'discard' ? (
           <div role="alertdialog" aria-labelledby="rule-editor-discard" className="flex flex-wrap items-center justify-end gap-2">
             <p id="rule-editor-discard" className="mr-auto text-sm font-medium">Discard changes?</p>
@@ -509,9 +475,16 @@ export function RuleEditorForm({ session, pool, agents, onSwitch, onClose, onDon
                 Delete rule
               </Button>
             )}
-            {mode.type === 'clone' && <span className="mr-auto text-xs text-muted-foreground max-sm:basis-full">Rule #{mode.sourceId} stays unchanged.</span>}
+            {mode.type === 'clone' && !blocked && (
+              <span className="mr-auto text-xs text-muted-foreground max-sm:basis-full">Rule #{mode.sourceId} stays unchanged.</span>
+            )}
             <Button variant="outline" disabled={busy !== null} onClick={() => guard(onClose)}>Cancel</Button>
-            <Button type="submit" form="rule-editor-form" disabled={busy !== null || stale}>
+            <Button
+              type="submit"
+              form="rule-editor-form"
+              disabled={busy !== null || stale || blocked}
+              aria-describedby={blocked ? 'rule-editor-duplicate' : undefined}
+            >
               {busy === 'save' ? 'Saving…' : saveLabel}
             </Button>
           </div>

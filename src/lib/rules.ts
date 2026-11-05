@@ -36,3 +36,10 @@ export function keepDefaults(identity: AgentIdentity): string {
     ? 'Creates a reusable rule bound to this machine, its tmux server and this agent session. Any path.'
     : 'Creates a reusable rule bound to this machine, its tmux server and this path. No agent session is reported.';
 }
+
+/** The same scope as `keepDefaults`, short enough to sit beside a button. */
+export function keepScope(identity: AgentIdentity): string {
+  return identity.sessionId
+    ? 'This session · this machine & tmux server'
+    : 'This path · this machine & tmux server';
+}

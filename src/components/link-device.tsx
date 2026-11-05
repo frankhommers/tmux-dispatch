@@ -97,15 +97,15 @@ export function LinkDevice({ theme, onTheme }: { theme: ThemePreference; onTheme
             required
             value={code}
             onChange={event => { setCode(event.target.value.toUpperCase()); setError(null); }}
-            placeholder="WQ7F-2K9P"
+            placeholder="XXXX-XXXX"
             autoComplete="off"
             autoCapitalize="characters"
             spellCheck={false}
             aria-invalid={error ? true : undefined}
             aria-describedby={cn(helpId, error && errorId)}
-            className={cn(inputClass, 'h-11 text-center font-mono text-lg tracking-widest')}
+            className={cn(inputClass, 'h-11 text-center font-mono text-lg tracking-widest placeholder:text-muted-foreground/50')}
           />
-          <p id={helpId} className="sr-only">Letters are converted to upper case.</p>
+          <p id={helpId} className="text-xs text-muted-foreground">Eight letters and digits, like WQ7F-2K9P. Case does not matter.</p>
           <InlineError id={errorId}>{error}</InlineError>
         </div>
         {!checked && (

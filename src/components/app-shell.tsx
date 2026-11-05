@@ -1,5 +1,5 @@
 import { useEffect, useState, type ReactNode } from 'react';
-import { Settings } from 'lucide-react';
+import { Bell, LogOut, Monitor, Moon, Settings, Sun } from 'lucide-react';
 import { toast } from 'sonner';
 import { Button } from '@/components/ui/button';
 import {
@@ -7,10 +7,11 @@ import {
   DropdownMenuContent,
   DropdownMenuItem,
   DropdownMenuLabel,
+  DropdownMenuRadioGroup,
+  DropdownMenuRadioItem,
   DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from '@/components/ui/dropdown-menu';
-import { ThemeSelect } from '@/components/theme-select';
 import type { Connection } from '@/hooks/use-inbox';
 import { logout, type SessionInfo } from '@/lib/api';
 import { describe } from '@/lib/errors';
@@ -19,15 +20,19 @@ import { cn } from '@/lib/utils';
 
 export function ConnectionStatus({ state, wasLive }: { state: Connection; wasLive: boolean }) {
   const label = state === 'live'
-    ? 'Live updates'
+    ? 'Live'
     : state === 'connecting'
       ? 'Connecting…'
-      : wasLive ? 'Reconnecting…' : 'Updates offline, retrying';
+      : wasLive ? 'Reconnecting…' : 'Offline, retrying';
   return (
-    <span role="status" className={cn('inline-flex items-center gap-1.5 text-xs font-medium whitespace-nowrap', state === 'live' ? 'text-live' : 'text-muted-foreground')}>
+    <span
+      role="status"
+      title={state === 'live' ? 'Live updates are on' : 'Live updates are not connected; data may be out of date'}
+      className={cn('inline-flex items-center gap-1.5 text-xs font-medium whitespace-nowrap', state === 'live' ? 'text-live' : 'text-warning')}
+    >
       <span
         aria-hidden
-        className={cn('size-1.5 rounded-full', state === 'live' ? 'bg-live' : state === 'offline' ? 'animate-pulse bg-warning-border' : 'bg-muted-foreground')}
+        className={cn('size-2 rounded-full', state === 'live' ? 'bg-live' : 'animate-pulse bg-warning-border')}
       />
       {label}
     </span>
@@ -38,22 +43,48 @@ type Permission = NotificationPermission | 'unsupported';
 
 const readPermission = (): Permission => (typeof Notification === 'undefined' ? 'unsupported' : Notification.permission);
 
-function SettingsMenu({ session }: { session: SessionInfo }) {
+/** Everything that is not about terminals: who you are, appearance, alerts, signing out. */
+function SettingsMenu({ session, theme, onTheme, onSignedOut }: {
+  session: SessionInfo;
+  theme: ThemePreference;
+  onTheme: (value: ThemePreference) => void;
+  onSignedOut: () => void;
+}) {
   const [permission, setPermission] = useState<Permission>(readPermission);
+  const [signingOut, setSigningOut] = useState(false);
   const account = session.authMode === 'token' ? 'Access link' : session.account ?? 'Local account';
+
+  const signOut = async () => {
+    setSigningOut(true);
+    try {
+      await logout();
+      onSignedOut();
+    } catch (cause) {
+      toast.error(`Could not sign out. ${describe(cause)}`);
+    } finally {
+      setSigningOut(false);
+    }
+  };
 
   return (
     <DropdownMenu onOpenChange={open => { if (open) setPermission(readPermission()); }}>
       <DropdownMenuTrigger asChild>
-        <Button variant="ghost" size="icon-sm" aria-label="Settings">
+        <Button variant="ghost" size="icon-sm" aria-label="Settings" className="max-sm:size-11">
           <Settings aria-hidden />
         </Button>
       </DropdownMenuTrigger>
-      <DropdownMenuContent className="w-72">
+      <DropdownMenuContent align="end" className="w-72">
         <DropdownMenuLabel>
-          <span className="block">Signed in as</span>
+          <span className="block text-xs font-normal text-muted-foreground">Signed in as</span>
           <span className="block text-sm font-medium text-foreground break-anywhere">{account}</span>
         </DropdownMenuLabel>
+        <DropdownMenuSeparator />
+        <DropdownMenuLabel className="text-xs font-normal text-muted-foreground">Appearance</DropdownMenuLabel>
+        <DropdownMenuRadioGroup value={theme} onValueChange={value => onTheme(value as ThemePreference)}>
+          <DropdownMenuRadioItem value="system"><Monitor aria-hidden />System</DropdownMenuRadioItem>
+          <DropdownMenuRadioItem value="light"><Sun aria-hidden />Light</DropdownMenuRadioItem>
+          <DropdownMenuRadioItem value="dark"><Moon aria-hidden />Dark</DropdownMenuRadioItem>
+        </DropdownMenuRadioGroup>
         <DropdownMenuSeparator />
         {permission === 'default' ? (
           <DropdownMenuItem
@@ -64,10 +95,11 @@ function SettingsMenu({ session }: { session: SessionInfo }) {
               });
             }}
           >
-            Enable notifications
+            <Bell aria-hidden />
+            Notify me of new requests
           </DropdownMenuItem>
         ) : (
-          <DropdownMenuLabel className="leading-[18px]">
+          <DropdownMenuLabel className="text-xs leading-[18px] font-normal text-muted-foreground">
             {permission === 'granted'
               ? 'Desktop notifications are on for new requests.'
               : permission === 'denied'
@@ -75,32 +107,17 @@ function SettingsMenu({ session }: { session: SessionInfo }) {
                 : 'This browser does not support desktop notifications.'}
           </DropdownMenuLabel>
         )}
+        {session.authMode !== 'token' && (
+          <>
+            <DropdownMenuSeparator />
+            <DropdownMenuItem disabled={signingOut} onSelect={event => { event.preventDefault(); void signOut(); }}>
+              <LogOut aria-hidden />
+              {signingOut ? 'Signing out…' : 'Sign out'}
+            </DropdownMenuItem>
+          </>
+        )}
       </DropdownMenuContent>
     </DropdownMenu>
-  );
-}
-
-function SignOut({ onSignedOut }: { onSignedOut: () => void }) {
-  const [busy, setBusy] = useState(false);
-  return (
-    <Button
-      variant="ghost"
-      size="sm"
-      disabled={busy}
-      onClick={async () => {
-        setBusy(true);
-        try {
-          await logout();
-          onSignedOut();
-        } catch (cause) {
-          toast.error(`Could not sign out. ${describe(cause)}`);
-        } finally {
-          setBusy(false);
-        }
-      }}
-    >
-      {busy ? 'Signing out…' : 'Sign out'}
-    </Button>
   );
 }
 
@@ -125,44 +142,32 @@ export function AppShell({ session, connection, wasLive, counts, theme, onTheme,
     document.title = counts.requests ? `(${counts.requests}) tmux-dispatch` : 'tmux-dispatch';
   }, [counts.requests]);
 
-  const links: { href: string; label: string; count: number | null }[] = [
-    { href: '#requests', label: 'Requests', count: counts.requests },
-    { href: '#agents', label: 'Agents', count: counts.agents },
-    { href: '#rules', label: 'Rules', count: counts.rules },
-    { href: '#machines', label: 'Machines', count: null },
-  ];
+  const waiting = counts.requests ?? 0;
 
   return (
     <div className="min-h-dvh">
-      <header className="border-b border-border bg-card sm:sticky sm:top-0 sm:z-40">
-        <div className="mx-auto flex max-w-[1440px] flex-wrap items-center gap-x-5 gap-y-2 px-4 py-2 sm:min-h-14 sm:px-6">
-          <div className="order-1 flex items-center gap-2.5">
-            <span aria-hidden className="font-mono text-lg leading-6 text-live">&gt;_</span>
-            <h1 className="text-base leading-6 font-[650]">tmux-dispatch</h1>
-          </div>
-          <div className="order-2 ml-auto sm:order-3">
+      <header className="sticky top-0 z-40 border-b border-border bg-card/95 backdrop-blur supports-[backdrop-filter]:bg-card/80">
+        <div className="mx-auto flex h-14 max-w-[1440px] items-center gap-3 px-4 sm:gap-5 sm:px-6">
+          <a href="#top" className="flex items-center gap-2 rounded-md" aria-label="tmux-dispatch, back to top">
+            <span aria-hidden className="grid size-7 place-items-center rounded-md bg-foreground font-mono text-xs font-bold text-background">&gt;_</span>
+            <h1 className="text-[15px] leading-6 font-semibold tracking-tight max-[380px]:sr-only">tmux-dispatch</h1>
+          </a>
+          {waiting > 0 && (
+            <a
+              href="#requests"
+              className="inline-flex items-center gap-1.5 rounded-full bg-warning-surface px-2.5 py-1 text-xs font-semibold text-warning ring-1 ring-inset ring-warning-border/50 hover:ring-warning-border max-sm:min-h-9"
+            >
+              <span aria-hidden className="size-1.5 animate-pulse rounded-full bg-warning-border" />
+              {waiting} waiting
+            </a>
+          )}
+          <div className="ml-auto flex items-center gap-2 sm:gap-3">
             <ConnectionStatus state={connection} wasLive={wasLive} />
-          </div>
-          <nav aria-label="Sections" className="order-3 -mx-2 flex flex-wrap gap-1 max-sm:w-full sm:order-2 sm:mx-0">
-            {links.map(link => (
-              <a
-                key={link.href}
-                href={link.href}
-                className="inline-flex items-center gap-1.5 rounded-md px-2 py-1.5 text-xs font-medium text-muted-foreground hover:bg-accent hover:text-foreground max-sm:min-h-11"
-              >
-                {link.label}
-                {link.count !== null && <span className="text-foreground tabular-nums">{link.count}</span>}
-              </a>
-            ))}
-          </nav>
-          <div className="order-4 flex items-center gap-1 max-sm:w-full max-sm:justify-end">
-            <ThemeSelect value={theme} onChange={onTheme} />
-            <SettingsMenu session={session} />
-            {session.authMode !== 'token' && <SignOut onSignedOut={onSignedOut} />}
+            <SettingsMenu session={session} theme={theme} onTheme={onTheme} onSignedOut={onSignedOut} />
           </div>
         </div>
       </header>
-      <main className="mx-auto grid max-w-[1440px] gap-6 px-4 py-6 sm:px-6">{children}</main>
+      <main id="top" className="mx-auto grid max-w-[1440px] gap-8 px-4 py-6 sm:px-6">{children}</main>
     </div>
   );
 }

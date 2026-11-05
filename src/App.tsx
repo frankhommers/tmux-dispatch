@@ -12,6 +12,7 @@ import { LinkDevice } from '@/components/link-device';
 import { RequestsSection } from '@/components/requests-section';
 import { RulesPanel, type RuleFocus } from '@/components/rules-panel';
 import { SignIn } from '@/components/sign-in';
+import { Workspace, useWorkspaceTab } from '@/components/workspace';
 import { useInbox } from '@/hooks/use-inbox';
 import { getSession, type SessionInfo } from '@/lib/api';
 import { describe, onUnauthorized } from '@/lib/errors';
@@ -23,6 +24,7 @@ export default function App() {
   const [sessionError, setSessionError] = useState<string | null>(null);
   const [checking, setChecking] = useState(false);
   const [ruleFocus, setRuleFocus] = useState<RuleFocus | null>(null);
+  const [tab, setTab] = useWorkspaceTab();
   const signedIn = session?.signedIn === true;
   const data = useInbox(signedIn);
   const { onArrived, onAutoAssigned } = data;
@@ -52,8 +54,9 @@ export default function App() {
   }, [onArrived, onAutoAssigned]);
 
   const showRule = useCallback((id: number, edit = false) => {
+    setTab('rules');
     setRuleFocus(current => ({ id, edit, nonce: (current?.nonce ?? 0) + 1 }));
-  }, []);
+  }, [setTab]);
 
   const themeProps = { theme: theme.preference, onTheme: theme.setPreference };
   let page;
@@ -92,21 +95,35 @@ export default function App() {
         {...themeProps}
       >
         <RequestsSection inbox={data.inbox} stale={stale} onRefresh={data.refreshInbox} />
-        <AgentsPanel
-          inbox={data.inbox}
-          pool={data.pool.data}
-          stale={stale}
-          onRefresh={data.refresh}
-          onShowRule={showRule}
+        <Workspace
+          tab={tab}
+          onTab={setTab}
+          counts={{
+            agents: inbox ? inbox.agents.length : null,
+            offline: inbox ? inbox.agents.filter(agent => !agent.connected).length : null,
+            rules: data.pool.data ? data.pool.data.length : null,
+            machines: data.devices.data ? data.devices.data.length : null,
+          }}
+          agents={(
+            <AgentsPanel
+              inbox={data.inbox}
+              pool={data.pool.data}
+              stale={stale}
+              onRefresh={data.refresh}
+              onShowRule={showRule}
+            />
+          )}
+          rules={(
+            <RulesPanel
+              pool={data.pool}
+              agents={inbox?.agents ?? []}
+              stale={stale}
+              focus={ruleFocus}
+              onRefresh={data.refreshPool}
+            />
+          )}
+          machines={<DevicesPanel devices={data.devices} stale={stale} onRefresh={data.refreshDevices} />}
         />
-        <RulesPanel
-          pool={data.pool}
-          agents={inbox?.agents ?? []}
-          stale={stale}
-          focus={ruleFocus}
-          onRefresh={data.refreshPool}
-        />
-        <DevicesPanel devices={data.devices} stale={stale} onRefresh={data.refreshDevices} />
       </AppShell>
     );
   }

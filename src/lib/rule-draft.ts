@@ -156,6 +156,18 @@ export function findSame(pool: PoolEntry[], entry: NewPoolEntry): PoolEntry | un
     && rule.tmuxServer === (entry.tmuxServer ?? null));
 }
 
+/**
+ * Another rule with the same kind and conditions as this draft, which the
+ * server would refuse to add again. While editing, the rule itself does not
+ * count. Only complete drafts are compared: a blank limited field never is.
+ */
+export function findDuplicate(pool: PoolEntry[] | null, draft: Draft, except: number | null): PoolEntry | undefined {
+  if (!pool) return undefined;
+  if (ELEMENTS.some(element => draft.conditions[element].constrained && !draft.conditions[element].value.trim())) return undefined;
+  const entry = toNewEntry(draft);
+  return findSame(pool.filter(rule => rule.id !== except), entry);
+}
+
 /** Whether the fields the form edits differ between two snapshots of a rule. */
 export function sameRecord(a: PoolEntry, b: PoolEntry): boolean {
   return a.pattern === b.pattern && a.kind === b.kind && a.reusable === b.reusable

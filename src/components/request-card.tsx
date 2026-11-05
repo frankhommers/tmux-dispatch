@@ -1,5 +1,5 @@
 import { useEffect, useId, useRef, useState } from 'react';
-import { AlertTriangle, Ellipsis, RefreshCw } from 'lucide-react';
+import { AlertTriangle, ChevronDown, Ellipsis, RefreshCw } from 'lucide-react';
 import { toast } from 'sonner';
 import { Button } from '@/components/ui/button';
 import {
@@ -8,12 +8,12 @@ import {
   DropdownMenuItem,
   DropdownMenuTrigger,
 } from '@/components/ui/dropdown-menu';
-import { ConfirmDialog, DetailList, Disclosure, InlineError, NotReported, Panel, inputClass } from '@/components/common';
+import { ConfirmDialog, DetailList, InlineError, NotReported, Panel, PathText, Tag, inputClass } from '@/components/common';
 import { DenyDialog } from '@/components/deny-dialog';
 import { TargetRow } from '@/components/target-row';
 import { dismissRequest, grant, refreshTargets, type PaneRequest } from '@/lib/api';
 import { describe, status } from '@/lib/errors';
-import { absolute, ago, normaliseTarget, until } from '@/lib/format';
+import { absolute, ago, minutesLeft, normaliseTarget, shortHost, until } from '@/lib/format';
 import { clientName, projectOf } from '@/lib/identity';
 import { cn } from '@/lib/utils';
 
@@ -24,6 +24,27 @@ interface Props {
   onChanged: () => void;
   /** This card answered or dismissed its request; focus moves on when it goes. */
   onActed: (id: string) => void;
+}
+
+/** Re-render every few seconds, so expiry and age keep counting between updates. */
+function useTick(ms: number) {
+  const [, setTick] = useState(0);
+  useEffect(() => {
+    const timer = setInterval(() => setTick(tick => tick + 1), ms);
+    return () => clearInterval(timer);
+  }, [ms]);
+}
+
+/** Time left, coloured by how soon an agent gives up: amber under 10 minutes, red under 2. */
+function Expiry({ at }: { at: number }) {
+  const left = minutesLeft(at);
+  if (left <= 0) return <Tag tone="urgent">Expired, checking…</Tag>;
+  const tone = left < 2 ? 'urgent' : left < 10 ? 'attention' : 'muted';
+  return (
+    <Tag tone={tone} className="tabular-nums" title={`Expires ${absolute(at)}`}>
+      Expires in {until(at)}
+    </Tag>
+  );
 }
 
 function ageLabel(seconds: number): string {
@@ -51,9 +72,15 @@ export function RequestCard({ request, headingId, onChanged, onActed }: Props) {
   const [announcement, setAnnouncement] = useState('');
   const [denyOpen, setDenyOpen] = useState(false);
   const [dismissOpen, setDismissOpen] = useState(false);
+  const [detailsOpen, setDetailsOpen] = useState(false);
+  // With a suggestion on offer, the other candidates wait behind a toggle.
+  const [othersOpen, setOthersOpen] = useState(!offered);
+  useTick(15_000);
   const expiryChecked = useRef(false);
 
   const groupName = useId();
+  const othersId = useId();
+  const detailsId = useId();
   const manualId = useId();
   const manualHelpId = useId();
   const assignErrorId = useId();
@@ -71,6 +98,7 @@ export function RequestCard({ request, headingId, onChanged, onActed }: Props) {
   // on the server, so any error seen after sending is a new refusal.
   useEffect(() => {
     if (sent !== null && request.lastError !== null) setSent(null);
+    if (request.lastError !== null) setOthersOpen(true);
   }, [request.lastError, sent]);
 
   // Never wait forever on an acknowledgement that may have been lost.
@@ -129,43 +157,56 @@ export function RequestCard({ request, headingId, onChanged, onActed }: Props) {
   const project = projectOf(agent);
   const heldBy = selected ? request.heldElsewhere[selected] : undefined;
 
+  const suggestedTarget = offered ? request.candidates.find(candidate => candidate.id === request.suggested) : undefined;
+  const others = offered ? request.candidates.filter(candidate => candidate.id !== request.suggested) : request.candidates;
+  // A selection among the others keeps them in view, whatever the toggle says.
+  const showOthers = othersOpen || (selected !== null && selected !== request.suggested);
+  const row = (target: PaneRequest['candidates'][number]) => (
+    <TargetRow
+      key={target.id}
+      name={groupName}
+      target={target}
+      selected={selected === target.id}
+      suggested={target.id === request.suggested}
+      heldBy={request.heldElsewhere[target.id]}
+      onSelect={() => { setSelected(target.id); setAnnouncement(''); }}
+    />
+  );
+
   return (
-    <Panel className="overflow-hidden border-l-[3px] border-l-warning-border">
+    <Panel className="overflow-hidden border-warning-border/50 border-l-4 border-l-warning-border">
       <article aria-labelledby={headingId}>
-        <div className="grid gap-2 p-4">
-          <div className="flex flex-wrap items-center justify-between gap-x-4 gap-y-1">
-            <div className="flex min-w-0 flex-wrap items-center gap-x-2 gap-y-1">
+        <div className="grid gap-1.5 bg-warning-surface/60 px-4 pt-3 pb-3">
+          <div className="flex flex-wrap items-center justify-between gap-x-4 gap-y-1.5">
+            <div className="flex min-w-0 flex-wrap items-center gap-x-1.5 gap-y-1 text-[13px]">
               {agent ? (
                 <>
-                  <strong className="font-semibold">{clientName(agent)}</strong>
-                  {project && <><span className="text-muted-foreground" aria-hidden>/</span><span>{project}</span></>}
-                  <span className="text-xs text-muted-foreground">on {agent.host}</span>
+                  <strong className="text-sm font-semibold">{project ?? clientName(agent)}</strong>
+                  {project && <span className="text-muted-foreground">· {clientName(agent)}</span>}
+                  <span className="text-muted-foreground" title={agent.host}>· {shortHost(agent.host)}</span>
                 </>
               ) : (
                 <span className="text-muted-foreground">Agent identity unavailable</span>
               )}
-              <span className="rounded-sm bg-warning-surface px-1.5 text-xs leading-[18px] font-medium text-warning">
-                {Noun} request
-              </span>
+              <Tag tone="neutral" className="ml-1">{Noun}</Tag>
             </div>
-            <span className="text-xs text-muted-foreground">
-              {ageLabel(request.ageSeconds)} · {expired ? 'Expired, checking…' : `Expires in ${until(request.expiresAt)}`}
-            </span>
+            <div className="flex items-center gap-2 text-xs text-muted-foreground">
+              <span>{ageLabel(request.ageSeconds)}</span>
+              <Expiry at={request.expiresAt} />
+            </div>
           </div>
           <h3 id={headingId} tabIndex={-1} className="text-base leading-6 font-semibold break-anywhere">
             {request.reason}
           </h3>
-          {agent?.cwd && (
-            <code className="font-mono text-xs text-muted-foreground select-text break-anywhere">{agent.cwd}</code>
-          )}
+          {agent?.cwd && <PathText path={agent.cwd} />}
         </div>
 
         <div aria-live="polite" className="sr-only">{announcement}</div>
 
         {(request.lastError || autoAssigned || sent) && (
-          <div className="grid gap-2 px-4 pb-3">
+          <div className="grid gap-2 border-t border-border px-4 py-3">
             {request.lastError && (
-              <p role="alert" className="flex items-start gap-2 rounded-md border border-destructive/40 px-3 py-2 text-sm text-destructive">
+              <p role="alert" className="flex items-start gap-2 rounded-md bg-urgent-surface px-3 py-2 text-sm text-destructive">
                 <AlertTriangle className="mt-0.5 size-4 shrink-0" aria-hidden />
                 <span className="break-anywhere">
                   The agent refused this assignment: {request.lastError}. Choose another target.
@@ -173,38 +214,44 @@ export function RequestCard({ request, headingId, onChanged, onActed }: Props) {
               </p>
             )}
             {autoAssigned && (
-              <p role="status" className="rounded-md bg-muted px-3 py-2 text-sm">
-                Automatically assigned <code className="font-mono">{autoAssigned.target}</code> by rule #{autoAssigned.entryId}. Waiting for the agent to confirm.
+              <p role="status" className="rounded-md bg-live-surface px-3 py-2 text-sm">
+                Assigned <code className="font-mono font-semibold">{autoAssigned.target}</code> automatically by rule #{autoAssigned.entryId}. Waiting for the agent to confirm.
               </p>
             )}
             {sent && !autoAssigned && (
               <p role="status" className="rounded-md bg-muted px-3 py-2 text-sm">
-                Assignment sent for <code className="font-mono">{sent}</code>. Waiting for the agent to confirm.
+                Assignment sent for <code className="font-mono font-semibold">{sent}</code>. Waiting for the agent to confirm.
               </p>
             )}
           </div>
         )}
 
-        <fieldset role="radiogroup" className="m-0 min-w-0 border-0 p-0">
-          <legend className="px-4 pb-2 text-xs font-medium text-muted-foreground">Choose a {noun}</legend>
-          {request.candidates.length > 0 ? (
-            <div>
-              {request.candidates.map(target => (
-                <TargetRow
-                  key={target.id}
-                  name={groupName}
-                  target={target}
-                  selected={selected === target.id}
-                  suggested={target.id === request.suggested}
-                  heldBy={request.heldElsewhere[target.id]}
-                  onSelect={() => { setSelected(target.id); setAnnouncement(''); }}
-                />
-              ))}
-            </div>
-          ) : (
-            <p className="border-t border-border px-4 py-4 text-sm text-muted-foreground">
+        <fieldset role="radiogroup" aria-describedby={headingId} className="m-0 min-w-0 border-0 p-0">
+          <legend className="sr-only">Choose a {noun}</legend>
+          {request.candidates.length === 0 ? (
+            <p className="border-t border-border px-4 py-3 text-sm text-muted-foreground">
               No {noun}s offered. Open a {noun}, then refresh, or assign by ID.
             </p>
+          ) : (
+            <>
+              {suggestedTarget && row(suggestedTarget)}
+              {offered && others.length > 0 && (
+                <button
+                  type="button"
+                  aria-expanded={showOthers}
+                  aria-controls={othersId}
+                  onClick={() => setOthersOpen(open => !open)}
+                  className="flex w-full items-center gap-1.5 border-t border-border px-4 py-2 text-left text-[13px] text-muted-foreground hover:bg-accent/60 hover:text-foreground max-sm:min-h-11"
+                >
+                  <ChevronDown aria-hidden className={cn('size-4 transition-transform', !showOthers && '-rotate-90')} />
+                  {showOthers ? `Other ${noun}s` : `Choose another ${noun}`}
+                  <span className="text-xs">· {others.length} more</span>
+                </button>
+              )}
+              <div id={othersId} hidden={!showOthers}>
+                {others.map(row)}
+              </div>
+            </>
           )}
         </fieldset>
 
@@ -223,32 +270,36 @@ export function RequestCard({ request, headingId, onChanged, onActed }: Props) {
               disabled={selected === null || locked || expired}
               aria-describedby={assignError ? assignErrorId : undefined}
               onClick={() => selected && void assign(selected)}
+              className="min-w-28 max-sm:h-11"
             >
-              {sending !== null && sending === selected ? 'Assigning…' : selected ? `Assign ${selected}` : 'Assign'}
+              {sending !== null && sending === selected ? 'Assigning…' : selected ? `Assign ${selected}` : `Select a ${noun}`}
             </Button>
-            <Button
-              variant="outline"
-              aria-expanded={manualOpen}
-              aria-controls={manualPanelId}
-              onClick={() => setManualOpen(open => !open)}
-            >
-              Assign by ID
-            </Button>
+            <Button variant="outline" onClick={() => setDenyOpen(true)} className="max-sm:h-11">Deny</Button>
           </div>
-          <div className="flex flex-wrap items-center gap-1">
-            <Button variant="ghost" onClick={() => void refresh()} disabled={refreshing}>
+          <div className="flex items-center gap-1">
+            <Button
+              variant="ghost"
+              size="icon"
+              onClick={() => void refresh()}
+              disabled={refreshing}
+              aria-label={`Refresh the ${noun} list`}
+              title={`Refresh the ${noun} list`}
+              className="max-sm:size-11"
+            >
               <RefreshCw aria-hidden className={cn(refreshing && 'animate-spin')} />
-              Refresh
             </Button>
-            <Button variant="ghost" onClick={() => setDenyOpen(true)}>Deny</Button>
             <DropdownMenu>
               <DropdownMenuTrigger asChild>
-                <Button variant="ghost" size="icon" aria-label="More request actions">
+                <Button variant="ghost" size="icon" aria-label="More request actions" className="max-sm:size-11">
                   <Ellipsis aria-hidden />
                 </Button>
               </DropdownMenuTrigger>
               <DropdownMenuContent>
-                <DropdownMenuItem onSelect={() => setDismissOpen(true)}>Dismiss without answering</DropdownMenuItem>
+                <DropdownMenuItem onSelect={() => setManualOpen(true)}>Assign by ID…</DropdownMenuItem>
+                <DropdownMenuItem onSelect={() => setDetailsOpen(open => !open)}>
+                  {detailsOpen ? 'Hide request details' : 'Show request details'}
+                </DropdownMenuItem>
+                <DropdownMenuItem variant="destructive" onSelect={() => setDismissOpen(true)}>Dismiss without answering…</DropdownMenuItem>
               </DropdownMenuContent>
             </DropdownMenu>
           </div>
@@ -270,7 +321,7 @@ export function RequestCard({ request, headingId, onChanged, onActed }: Props) {
               if (target && !locked) void assign(target);
             }}
           >
-            <label htmlFor={manualId} className="text-xs font-medium">{Noun} ID</label>
+            <label htmlFor={manualId} className="text-xs font-medium">Assign by {Noun.toLowerCase()} ID</label>
             <div className="flex flex-wrap items-center gap-2">
               <input
                 id={manualId}
@@ -280,20 +331,21 @@ export function RequestCard({ request, headingId, onChanged, onActed }: Props) {
                 aria-describedby={manualHelpId}
                 autoComplete="off"
                 spellCheck={false}
+                autoFocus
                 className={cn(inputClass, 'w-40 font-mono')}
               />
-              <Button type="submit" variant="secondary" disabled={locked}>Assign</Button>
+              <Button type="submit" variant="secondary" disabled={locked} className="max-sm:h-11">Assign</Button>
+              <Button type="button" variant="ghost" onClick={() => setManualOpen(false)} className="max-sm:h-11">Cancel</Button>
             </div>
             <p id={manualHelpId} className="text-xs text-muted-foreground">
-              The agent validates this target against its scope. A plain number becomes {request.kind === 'window' ? '@' : '%'} followed by it.
+              For a {noun} that is not listed. The agent checks it against its scope. A plain number becomes {request.kind === 'window' ? '@' : '%'} followed by it.
             </p>
           </form>
         )}
 
-        <div className="border-t border-border px-4 py-2">
-          <Disclosure summary="Request details">
+        {detailsOpen && (
+          <div id={detailsId} className="border-t border-border bg-muted/50 px-4 py-3">
             <DetailList
-              className="pb-2"
               items={[
                 ['Request', request.id, true],
                 ['Created', absolute(request.createdAt)],
@@ -312,8 +364,8 @@ export function RequestCard({ request, headingId, onChanged, onActed }: Props) {
                 ['Age', ago(request.createdAt)],
               ]}
             />
-          </Disclosure>
-        </div>
+          </div>
+        )}
       </article>
 
       <DenyDialog

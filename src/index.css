@@ -10,61 +10,67 @@
 :root {
   color-scheme: light;
   --radius: 10px;
-  --background: #ffffff;
-  --foreground: oklch(0.141 0.005 285.823);
+  /* A quiet grey page, so white panels read as panels without borders shouting. */
+  --background: #f4f5f7;
+  --foreground: #16181d;
   --card: #ffffff;
-  --card-foreground: oklch(0.141 0.005 285.823);
+  --card-foreground: #16181d;
   --popover: #ffffff;
-  --popover-foreground: oklch(0.141 0.005 285.823);
-  --primary: oklch(0.21 0.006 285.885);
-  --primary-foreground: oklch(0.985 0 0);
-  --secondary: oklch(0.967 0.001 286.375);
-  --secondary-foreground: oklch(0.21 0.006 285.885);
-  --muted: oklch(0.967 0.001 286.375);
-  --muted-foreground: #5f5f6a;
-  --accent: oklch(0.967 0.001 286.375);
-  --accent-foreground: oklch(0.21 0.006 285.885);
+  --popover-foreground: #16181d;
+  --primary: #16181d;
+  --primary-foreground: #ffffff;
+  --secondary: #eef0f3;
+  --secondary-foreground: #16181d;
+  --muted: #f1f2f5;
+  --muted-foreground: #5a5f6b;
+  --accent: #eceef2;
+  --accent-foreground: #16181d;
   --destructive: #b42318;
   --destructive-foreground: #ffffff;
-  --border: oklch(0.92 0.004 286.32);
+  --border: #e2e4e9;
   /* Form controls need a 3:1 boundary against the surface. */
-  --input: #8b8b96;
-  --ring: #166534;
+  --input: #8b8f99;
+  --ring: #2563eb;
   /* Small green text on white: the darker green keeps 4.5:1. */
-  --live: #166534;
-  /* Pending attention only. */
-  --warning: #92400e;
-  --warning-surface: #fffbeb;
-  --warning-border: #d97706;
-  --highlight: #ecfdf3;
+  --live: #15803d;
+  --live-surface: #ecfdf3;
+  /* Needs a decision. */
+  --warning: #8a3c0c;
+  --warning-surface: #fff8eb;
+  --warning-border: #e59a2f;
+  /* Error, refused, about to expire. */
+  --urgent-surface: #fef3f2;
+  --highlight: #eef4ff;
 }
 
 .dark {
   color-scheme: dark;
-  --background: #101419;
-  --foreground: #eef2f6;
-  --card: #191f27;
-  --card-foreground: #eef2f6;
-  --popover: #202833;
-  --popover-foreground: #eef2f6;
+  --background: #0d1015;
+  --foreground: #eef1f5;
+  --card: #161a21;
+  --card-foreground: #eef1f5;
+  --popover: #1d222b;
+  --popover-foreground: #eef1f5;
   --primary: #9be5bb;
-  --primary-foreground: #112b1c;
-  --secondary: #2a3542;
-  --secondary-foreground: #eef2f6;
-  --muted: #242e3a;
-  --muted-foreground: #b0bdcc;
-  --accent: #293643;
+  --primary-foreground: #0f2418;
+  --secondary: #252c37;
+  --secondary-foreground: #eef1f5;
+  --muted: #1e242d;
+  --muted-foreground: #b7c1ce;
+  --accent: #232a34;
   --accent-foreground: #ffffff;
-  --destructive: #ff9696;
+  --destructive: #ff9b93;
   --destructive-foreground: #2b0b0b;
-  --border: #3a4858;
-  --input: #627286;
-  --ring: #9be5bb;
-  --live: #9be5bb;
+  --border: #2b333e;
+  --input: #66758a;
+  --ring: #8ab4ff;
+  --live: #8fe0b0;
+  --live-surface: #15291e;
   --warning: #fcd68a;
-  --warning-surface: #30291d;
-  --warning-border: #d9a441;
-  --highlight: #1c3328;
+  --warning-surface: #241e12;
+  --warning-border: #c58f2c;
+  --urgent-surface: #2c1716;
+  --highlight: #1a2638;
 }
 
 @theme inline {
@@ -92,6 +98,8 @@
   --color-input: var(--input);
   --color-ring: var(--ring);
   --color-live: var(--live);
+  --color-live-surface: var(--live-surface);
+  --color-urgent-surface: var(--urgent-surface);
   --color-warning: var(--warning);
   --color-warning-surface: var(--warning-surface);
   --color-warning-border: var(--warning-border);

@@ -65,3 +65,25 @@ export function isBareId(pattern: string): boolean {
 export function plural(count: number, one: string, many = `${one}s`): string {
   return `${count} ${count === 1 ? one : many}`;
 }
+
+/** A machine as people name it: the first label of its host name. Display only. */
+export function shortHost(host: string): string {
+  return host.split('.')[0] || host;
+}
+
+/**
+ * A working directory short enough for a row, keeping what tells projects
+ * apart: home becomes ~, and only the last three segments are kept.
+ * Display only: the full path stays available beside it.
+ */
+export function shortPath(cwd: string): string {
+  const home = cwd.replace(/^\/(Users|home)\/[^/]+/, '~');
+  const parts = home.split('/').filter(Boolean);
+  if (parts.length <= 4) return home;
+  return `${parts[0] === '~' ? '~/' : '/'}…/${parts.slice(-3).join('/')}`;
+}
+
+/** Minutes left before a moment; negative once it has passed. */
+export function minutesLeft(at: number): number {
+  return (at - Date.now()) / 60_000;
+}

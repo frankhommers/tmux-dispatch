@@ -1,12 +1,13 @@
-import { useEffect, useState } from 'react';
-import { ChevronRight } from 'lucide-react';
+import { useState } from 'react';
+import { KeyRound, Laptop } from 'lucide-react';
 import { toast } from 'sonner';
 import { Button } from '@/components/ui/button';
 import { Skeleton } from '@/components/ui/skeleton';
-import { ConfirmDialog, Count, LoadError, Panel, SectionNotice } from '@/components/common';
+import { ConfirmDialog, LoadError, Panel, PanelToolbar, SectionNotice } from '@/components/common';
 import type { Devices } from '@/hooks/use-inbox';
 import { revokeDevice, type Device } from '@/lib/api';
-import { ago, day } from '@/lib/format';
+import { absolute, day } from '@/lib/format';
+import { TimeAgo } from '@/components/common';
 
 /**
  * The machines allowed to connect at all. Unpairing one drops its token: a
@@ -16,76 +17,57 @@ import { ago, day } from '@/lib/format';
 export function DevicesPanel({ devices, stale, onRefresh }: { devices: Devices; stale: boolean; onRefresh: () => void }) {
   const list = devices.data;
   const loaded = list !== null;
-  // Collapsed when there are machines; open when empty or failing.
-  const [open, setOpen] = useState<boolean | null>(null);
   const [unpairing, setUnpairing] = useState<Device | null>(null);
-  const needsAttention = (!loaded && devices.error !== null) || (loaded && list.length === 0);
 
-  useEffect(() => {
-    if (open === null && (loaded || devices.error)) setOpen(needsAttention);
-    else if (needsAttention && open === false && devices.error) setOpen(true);
-  }, [loaded, devices.error, needsAttention, open]);
-
-  const pairHint = (
-    <p className="text-xs leading-[18px] text-muted-foreground">
-      Pair a machine with <code className="font-mono text-foreground">tmux-mcp dispatch-login</code>, then{' '}
-      <a href="/link" className="font-medium text-foreground underline underline-offset-2 hover:no-underline">enter pairing code</a>.
-    </p>
+  const pairButton = (
+    <Button variant="outline" size="sm" asChild className="max-sm:h-11">
+      <a href="/link"><KeyRound aria-hidden />Enter pairing code</a>
+    </Button>
   );
 
   return (
-    <section id="machines" aria-labelledby="machines-title" className="min-w-0 scroll-mt-4 sm:scroll-mt-20">
-      <Panel className="overflow-hidden">
-        <details open={open ?? false} onToggle={event => setOpen((event.target as HTMLDetailsElement).open)}>
-          <summary className="flex items-center gap-2 px-4 py-3 hover:bg-accent/50 max-sm:min-h-11">
-            <ChevronRight className="disclosure-chevron size-4 text-muted-foreground" aria-hidden />
-            <h2 id="machines-title" tabIndex={-1} className="text-base leading-6 font-semibold">
-              Paired machines
-              {loaded && <Count>{list.length}</Count>}
-            </h2>
-            <span className="ml-auto hidden text-xs text-muted-foreground sm:inline">Allowed to connect to dispatch</span>
-          </summary>
-          <div className="border-t border-border">
-            {loaded && (devices.error || stale) && (
-              <div className="px-4 pt-3">
-                <SectionNotice error={devices.error} refreshing={devices.refreshing} stale={stale} what="machines" onRetry={onRefresh} />
-              </div>
-            )}
-            {!loaded && devices.error ? (
-              <div className="p-3"><LoadError what="machines" error={devices.error} onRetry={onRefresh} busy={devices.refreshing} /></div>
-            ) : !loaded ? (
-              <div className="grid gap-2 p-4" aria-busy="true">
-                <p role="status" className="text-xs text-muted-foreground">Loading machines…</p>
-                <Skeleton className="h-8 w-full" />
-              </div>
-            ) : list.length === 0 ? (
-              <div className="grid gap-1 px-4 py-3">
-                <p className="text-sm text-muted-foreground">No paired machines.</p>
-                {pairHint}
-              </div>
-            ) : (
-              <>
-                <ul className="m-0 list-none p-0">
-                  {list.map(device => (
-                    <li key={device.id} className="flex flex-wrap items-center justify-between gap-3 border-b border-border px-4 py-3">
-                      <div className="min-w-0">
-                        <p className="font-mono text-sm font-medium break-anywhere">{device.name}</p>
-                        <p className="text-xs leading-[18px] text-muted-foreground">
-                          {device.lastSeenAt ? `Last connected ${ago(device.lastSeenAt)}` : 'Never connected'} · Paired {day(device.createdAt)}
-                        </p>
-                      </div>
-                      <Button variant="outline" size="sm" onClick={() => setUnpairing(device)} aria-label={`Unpair ${device.name}`}>
-                        Unpair
-                      </Button>
-                    </li>
-                  ))}
-                </ul>
-                <div className="px-4 py-3">{pairHint}</div>
-              </>
-            )}
-          </div>
-        </details>
-      </Panel>
+    <div className="min-w-0">
+      <h2 id="machines-title" tabIndex={-1} className="sr-only">Paired machines</h2>
+      <PanelToolbar actions={pairButton}>
+        Machines allowed to connect agents. Pair one with{' '}
+        <code className="rounded bg-muted px-1 font-mono text-xs text-foreground">tmux-mcp dispatch-login</code>, then enter its code.
+      </PanelToolbar>
+      {loaded && (devices.error || stale) && (
+        <SectionNotice error={devices.error} refreshing={devices.refreshing} stale={stale} what="machines" onRetry={onRefresh} />
+      )}
+      {!loaded && devices.error ? (
+        <LoadError what="machines" error={devices.error} onRetry={onRefresh} busy={devices.refreshing} />
+      ) : !loaded ? (
+        <Panel className="grid gap-2 p-4" aria-busy="true">
+          <p role="status" className="text-xs text-muted-foreground">Loading machines…</p>
+          <Skeleton className="h-8 w-full" />
+        </Panel>
+      ) : list.length === 0 ? (
+        <Panel className="px-4 py-6 text-center text-sm text-muted-foreground">
+          No paired machines yet. Agents can only connect from a paired machine.
+        </Panel>
+      ) : (
+        <Panel className="overflow-hidden">
+          <ul className="m-0 list-none p-0" aria-label="Paired machines">
+            {list.map(device => (
+              <li key={device.id} className="flex flex-wrap items-center gap-x-4 gap-y-2 border-t border-border px-4 py-3 first:border-t-0">
+                <Laptop className="size-4 shrink-0 text-muted-foreground" aria-hidden />
+                <div className="min-w-0 flex-1">
+                  <p className="text-sm font-semibold break-anywhere">{device.name}</p>
+                  <p className="text-xs leading-[18px] text-muted-foreground">
+                    {device.lastSeenAt ? <TimeAgo at={device.lastSeenAt} prefix="Last connected" /> : 'Never connected'}
+                    {' · '}
+                    <span title={absolute(device.createdAt)}>Paired {day(device.createdAt)}</span>
+                  </p>
+                </div>
+                <Button variant="outline" size="sm" onClick={() => setUnpairing(device)} aria-label={`Unpair ${device.name}`} className="max-sm:h-11">
+                  Unpair
+                </Button>
+              </li>
+            ))}
+          </ul>
+        </Panel>
+      )}
 
       <ConfirmDialog
         open={unpairing !== null}
@@ -101,6 +83,6 @@ export function DevicesPanel({ devices, stale, onRefresh }: { devices: Devices; 
           onRefresh();
         }}
       />
-    </section>
+    </div>
   );
 }

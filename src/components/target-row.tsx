@@ -1,89 +1,61 @@
-import { ArrowRight, TerminalSquare } from 'lucide-react';
-import { Button } from '@/components/ui/button';
 import { parseLabel, type Target } from '@/lib/api';
-import { cn } from '@/lib/utils';
+import { projectName } from '@/lib/format';
 
 interface Props {
   target: Target;
-  busy: boolean;
+  /** Radio group name, unique per request. */
+  name: string;
   selected: boolean;
   /** The agent asked for this one by name. */
-  suggested?: boolean;
-  /** Already handed to an agent working here, on this same tmux server. */
+  suggested: boolean;
+  /** Already handed to an agent working in this directory, on the same tmux server. */
   heldBy?: string;
   onSelect: () => void;
-  onAssign: () => void;
 }
 
-export function TargetRow({ target, busy, selected, suggested, heldBy, onSelect, onAssign }: Props) {
-  const { id, location, command, title } = parseLabel(target.label);
+/**
+ * One candidate, as a native radio. Selecting never assigns: the Assign
+ * button below the list does that. Hovering does nothing at all.
+ */
+export function TargetRow({ target, name, selected, suggested, heldBy, onSelect }: Props) {
+  const { location, command, title } = parseLabel(target.label);
+  // A label that does not split cleanly is shown whole, so nothing is lost.
+  const parsed = location !== '';
 
   return (
-    <li>
-      <div
-        role="button"
-        tabIndex={0}
-        aria-label={`Assign ${id}`}
-        onFocus={onSelect}
-        onMouseEnter={onSelect}
-        onClick={onAssign}
-        onKeyDown={event => {
-          if (event.key === 'Enter' || event.key === ' ') {
-            event.preventDefault();
-            onAssign();
-          }
-        }}
-        className={cn(
-          'group flex flex-wrap items-center gap-3 rounded-lg border border-border px-3 py-3',
-          'cursor-pointer transition-colors outline-none',
-          'hover:border-border hover:bg-accent/60',
-          'focus-visible:border-ring focus-visible:bg-accent/60',
-          selected && 'border-live/60 bg-live/10',
-          busy && 'pointer-events-none opacity-50'
+    <label className="flex cursor-pointer items-start gap-3 border-t border-border px-4 py-3 hover:bg-accent/60 has-[:checked]:bg-muted max-sm:flex-wrap">
+      <input
+        type="radio"
+        name={name}
+        value={target.id}
+        checked={selected}
+        onChange={onSelect}
+        className="mt-0.5 size-4 shrink-0 accent-[var(--live)]"
+      />
+      <code className="shrink-0 font-mono text-sm font-semibold">{target.id}</code>
+      <span className="min-w-[8rem] flex-1">
+        {parsed ? (
+          <>
+            <span className="flex flex-wrap items-center gap-x-2 gap-y-1">
+              <span className="font-mono text-sm break-anywhere">{location}</span>
+              {command && <span className="rounded-sm bg-muted px-1.5 font-mono text-xs leading-[18px]">{command}</span>}
+            </span>
+            {title && <span className="mt-0.5 block text-xs leading-[18px] text-muted-foreground break-anywhere">{title}</span>}
+          </>
+        ) : (
+          <span className="font-mono text-sm break-anywhere">{target.label}</span>
         )}
-      >
-        <TerminalSquare className="size-4 shrink-0 text-muted-foreground" />
-
-        <span className="font-mono text-sm font-medium tabular-nums">{id}</span>
-
+      </span>
+      <span className="flex shrink-0 flex-wrap items-center gap-2 max-sm:basis-full max-sm:pl-7">
         {suggested && (
-          <span className="rounded-md bg-live/15 px-1.5 py-0.5 text-xs text-live">asked for</span>
+          <span className="rounded-sm bg-muted px-1.5 text-xs leading-[18px] font-medium">Requested</span>
         )}
-
         {heldBy && (
-          <span
-            className="max-w-[14rem] truncate rounded-md bg-destructive/15 px-1.5 py-0.5 text-xs text-destructive"
-            title={`Already assigned to an agent in ${heldBy}`}
-          >
-            held by {heldBy.split('/').pop()}
+          <span className="rounded-sm bg-warning-surface px-1.5 text-xs leading-[18px] font-medium text-warning">
+            Held by {projectName(heldBy)}
           </span>
         )}
-
-        {command && (
-          <span className="rounded-md bg-muted px-1.5 py-0.5 font-mono text-xs text-muted-foreground">
-            {command}
-          </span>
-        )}
-
-        <span className="min-w-[6rem] flex-1 break-words text-sm text-muted-foreground">
-          {location}
-          {title && <span className="ml-2">{title}</span>}
-        </span>
-
-        <Button
-          size="sm"
-          tabIndex={-1}
-          onClick={event => {
-            event.stopPropagation();
-            onAssign();
-          }}
-          disabled={busy}
-          className="shrink-0"
-        >
-          Assign
-          <ArrowRight className="size-3.5" />
-        </Button>
-      </div>
-    </li>
+      </span>
+    </label>
   );
 }

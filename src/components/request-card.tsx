@@ -1,13 +1,30 @@
-import { useEffect, useState } from 'react';
-import { AlertTriangle, Cpu, RefreshCw, Trash2 } from 'lucide-react';
+import { useEffect, useId, useRef, useState } from 'react';
+import { AlertTriangle, Ellipsis, RefreshCw } from 'lucide-react';
 import { toast } from 'sonner';
-import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
-import { Card, CardContent, CardFooter, CardHeader } from '@/components/ui/card';
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuTrigger,
+} from '@/components/ui/dropdown-menu';
+import { ConfirmDialog, DetailList, Disclosure, InlineError, NotReported, Panel, inputClass } from '@/components/common';
 import { DenyDialog } from '@/components/deny-dialog';
 import { TargetRow } from '@/components/target-row';
 import { dismissRequest, grant, refreshTargets, type PaneRequest } from '@/lib/api';
-import { shortSession } from '@/lib/format';
+import { describe, status } from '@/lib/errors';
+import { absolute, ago, normaliseTarget, until } from '@/lib/format';
+import { clientName, projectOf } from '@/lib/identity';
+import { cn } from '@/lib/utils';
+
+interface Props {
+  request: PaneRequest;
+  headingId: string;
+  /** Re-read the inbox. */
+  onChanged: () => void;
+  /** This card answered or dismissed its request; focus moves on when it goes. */
+  onActed: (id: string) => void;
+}
 
 function ageLabel(seconds: number): string {
   if (seconds < 60) return `${seconds}s ago`;
@@ -15,51 +32,82 @@ function ageLabel(seconds: number): string {
   return `${Math.round(seconds / 3600)}h ago`;
 }
 
-/**
- * tmux names panes `%3` and windows `@5`. Someone reading a number off their
- * screen types the number, so accept that too rather than refusing it.
- */
-function normalise(input: string, kind: 'pane' | 'window'): string {
-  const value = input.trim();
-  return /^\d+$/.test(value) ? `${kind === 'window' ? '@' : '%'}${value}` : value;
-}
-
-export function RequestCard({ request, onChanged }: { request: PaneRequest; onChanged: () => void }) {
+export function RequestCard({ request, headingId, onChanged, onActed }: Props) {
+  const noun = request.kind === 'window' ? 'window' : 'pane';
+  const Noun = request.kind === 'window' ? 'Window' : 'Pane';
   const offered = request.suggested !== null
     && request.candidates.some(candidate => candidate.id === request.suggested);
-  const [selected, setSelected] = useState<string | null>(offered ? request.suggested : null);
-  const [busy, setBusy] = useState(false);
-  const [refreshing, setRefreshing] = useState(false);
-  // A pane the agent named but did not offer can only be assigned by id, so
-  // put it in the field rather than making someone retype it.
-  const [typed, setTyped] = useState(offered ? '' : request.suggested ?? '');
 
-  // Arrow keys walk the list; Enter assigns whatever is highlighted.
+  const [selected, setSelected] = useState<string | null>(offered ? request.suggested : null);
+  // A target the agent named but did not offer can only be assigned by ID, so
+  // put it in that field rather than making someone retype it.
+  const [manualOpen, setManualOpen] = useState(!offered && request.suggested !== null);
+  const [typed, setTyped] = useState(offered ? '' : request.suggested ?? '');
+  const [sending, setSending] = useState<string | null>(null);
+  /** Sent and waiting for the agent: no second submission until it settles. */
+  const [sent, setSent] = useState<string | null>(null);
+  const [assignError, setAssignError] = useState<string | null>(null);
+  const [refreshing, setRefreshing] = useState(false);
+  const [announcement, setAnnouncement] = useState('');
+  const [denyOpen, setDenyOpen] = useState(false);
+  const [dismissOpen, setDismissOpen] = useState(false);
+  const expiryChecked = useRef(false);
+
+  const groupName = useId();
+  const manualId = useId();
+  const manualHelpId = useId();
+  const assignErrorId = useId();
+  const manualPanelId = useId();
+
+  // A refreshed list may no longer hold the selected target.
   useEffect(() => {
-    const onKey = (event: KeyboardEvent) => {
-      if (request.candidates.length === 0) return;
-      if (event.key !== 'ArrowDown' && event.key !== 'ArrowUp') return;
-      event.preventDefault();
-      const index = request.candidates.findIndex(target => target.id === selected);
-      const next = event.key === 'ArrowDown'
-        ? Math.min(index + 1, request.candidates.length - 1)
-        : Math.max(index - 1, 0);
-      setSelected(request.candidates[index === -1 ? 0 : next].id);
-    };
-    window.addEventListener('keydown', onKey);
-    return () => window.removeEventListener('keydown', onKey);
+    if (selected !== null && !request.candidates.some(candidate => candidate.id === selected)) {
+      setSelected(null);
+      setAnnouncement('Selected target is no longer offered');
+    }
   }, [request.candidates, selected]);
 
+  // The agent refused: the request is open again. Answering clears lastError
+  // on the server, so any error seen after sending is a new refusal.
+  useEffect(() => {
+    if (sent !== null && request.lastError !== null) setSent(null);
+  }, [request.lastError, sent]);
+
+  // Never wait forever on an acknowledgement that may have been lost.
+  useEffect(() => {
+    if (sent === null) return;
+    const timer = setTimeout(() => setSent(null), 20_000);
+    return () => clearTimeout(timer);
+  }, [sent]);
+
+  // At expiry, ask the server rather than claiming the request is gone.
+  const expired = Date.now() >= request.expiresAt;
+  useEffect(() => {
+    if (expired && !expiryChecked.current) {
+      expiryChecked.current = true;
+      onChanged();
+    }
+  }, [expired, onChanged]);
+
+  const autoAssigned = request.autoAssigned;
+  const locked = sending !== null || sent !== null || autoAssigned !== null;
+
   const assign = async (target: string) => {
-    setBusy(true);
+    setSending(target);
+    setAssignError(null);
     try {
       await grant(request.id, target);
-      toast.success(`Assigned ${target}`, { description: request.reason });
+      setSent(target);
+      toast.success(`Assignment sent for ${target}`, { description: request.reason });
+      onActed(request.id);
       onChanged();
     } catch (cause) {
-      toast.error((cause as Error).message);
+      const message = status(cause) === 404 ? 'This request is no longer waiting.' : describe(cause);
+      setAssignError(message);
+      toast.error(message);
+      onChanged();
     } finally {
-      setBusy(false);
+      setSending(null);
     }
   };
 
@@ -71,117 +119,224 @@ export function RequestCard({ request, onChanged }: { request: PaneRequest; onCh
       await refreshTargets(request.id);
       setTimeout(onChanged, 400);
     } catch (cause) {
-      toast.error((cause as Error).message);
+      toast.error(describe(cause));
     } finally {
       setTimeout(() => setRefreshing(false), 400);
     }
   };
 
+  const agent = request.agent;
+  const project = projectOf(agent);
+  const heldBy = selected ? request.heldElsewhere[selected] : undefined;
+
   return (
-    <Card className="animate-in fade-in slide-in-from-bottom-2 overflow-hidden border-border border-l-4 border-l-live shadow-sm duration-500">
-      <CardHeader className="gap-2">
-        <div className="flex flex-wrap items-center gap-2">
-          <Badge variant="secondary" className="font-mono text-[11px]">{request.kind}</Badge>
-          <span className="font-mono text-xs text-muted-foreground">{request.id}</span>
-          <span className="text-xs text-muted-foreground">· {ageLabel(request.ageSeconds)}</span>
-          {request.agent && (
-            <span className="flex items-center gap-1 text-xs text-muted-foreground">
-              <Cpu className="size-3" />
-              {request.agent.host}
-              <span className="text-muted-foreground">· scope {request.agent.scope}</span>
-              {request.agent.sessionId && (
-                <span className="font-mono text-muted-foreground" title={`Session ${request.agent.sessionId}`}>
-                  · session {shortSession(request.agent.sessionId)}
-                </span>
+    <Panel className="overflow-hidden border-l-[3px] border-l-warning-border">
+      <article aria-labelledby={headingId}>
+        <div className="grid gap-2 p-4">
+          <div className="flex flex-wrap items-center justify-between gap-x-4 gap-y-1">
+            <div className="flex min-w-0 flex-wrap items-center gap-x-2 gap-y-1">
+              {agent ? (
+                <>
+                  <strong className="font-semibold">{clientName(agent)}</strong>
+                  {project && <><span className="text-muted-foreground" aria-hidden>/</span><span>{project}</span></>}
+                  <span className="text-xs text-muted-foreground">on {agent.host}</span>
+                </>
+              ) : (
+                <span className="text-muted-foreground">Agent identity unavailable</span>
               )}
+              <span className="rounded-sm bg-warning-surface px-1.5 text-xs leading-[18px] font-medium text-warning">
+                {Noun} request
+              </span>
+            </div>
+            <span className="text-xs text-muted-foreground">
+              {ageLabel(request.ageSeconds)} · {expired ? 'Expired, checking…' : `Expires in ${until(request.expiresAt)}`}
             </span>
+          </div>
+          <h3 id={headingId} tabIndex={-1} className="text-base leading-6 font-semibold break-anywhere">
+            {request.reason}
+          </h3>
+          {agent?.cwd && (
+            <code className="font-mono text-xs text-muted-foreground select-text break-anywhere">{agent.cwd}</code>
           )}
         </div>
-        <p className="text-balance text-lg font-semibold leading-snug">{request.reason}</p>
-        {request.agent?.cwd && (
-          <p className="break-all font-mono text-xs text-muted-foreground">{request.agent.cwd}</p>
-        )}
-      </CardHeader>
 
-      <CardContent>
-        <p className="mb-3 text-sm font-medium">Available {request.kind === 'window' ? 'windows' : 'panes'}</p>
-        {request.lastError && (
-          <p className="mb-3 flex items-start gap-2 rounded-lg border border-destructive/40 bg-destructive/10 px-3 py-2 text-sm">
-            <AlertTriangle className="mt-0.5 size-4 shrink-0" />
-            <span>
-              The agent refused that: {request.lastError}. It is still waiting.
+        <div aria-live="polite" className="sr-only">{announcement}</div>
+
+        {(request.lastError || autoAssigned || sent) && (
+          <div className="grid gap-2 px-4 pb-3">
+            {request.lastError && (
+              <p role="alert" className="flex items-start gap-2 rounded-md border border-destructive/40 px-3 py-2 text-sm text-destructive">
+                <AlertTriangle className="mt-0.5 size-4 shrink-0" aria-hidden />
+                <span className="break-anywhere">
+                  The agent refused this assignment: {request.lastError}. Choose another target.
+                </span>
+              </p>
+            )}
+            {autoAssigned && (
+              <p role="status" className="rounded-md bg-muted px-3 py-2 text-sm">
+                Automatically assigned <code className="font-mono">{autoAssigned.target}</code> by rule #{autoAssigned.entryId}. Waiting for the agent to confirm.
+              </p>
+            )}
+            {sent && !autoAssigned && (
+              <p role="status" className="rounded-md bg-muted px-3 py-2 text-sm">
+                Assignment sent for <code className="font-mono">{sent}</code>. Waiting for the agent to confirm.
+              </p>
+            )}
+          </div>
+        )}
+
+        <fieldset role="radiogroup" className="m-0 min-w-0 border-0 p-0">
+          <legend className="px-4 pb-2 text-xs font-medium text-muted-foreground">Choose a {noun}</legend>
+          {request.candidates.length > 0 ? (
+            <div>
+              {request.candidates.map(target => (
+                <TargetRow
+                  key={target.id}
+                  name={groupName}
+                  target={target}
+                  selected={selected === target.id}
+                  suggested={target.id === request.suggested}
+                  heldBy={request.heldElsewhere[target.id]}
+                  onSelect={() => { setSelected(target.id); setAnnouncement(''); }}
+                />
+              ))}
+            </div>
+          ) : (
+            <p className="border-t border-border px-4 py-4 text-sm text-muted-foreground">
+              No {noun}s offered. Open a {noun}, then refresh, or assign by ID.
+            </p>
+          )}
+        </fieldset>
+
+        {heldBy && (
+          <p className="flex items-start gap-2 border-t border-border bg-warning-surface px-4 py-2 text-xs leading-[18px] text-warning">
+            <AlertTriangle className="mt-px size-3.5 shrink-0" aria-hidden />
+            <span className="break-anywhere">
+              {selected} is already held by an agent in <code className="font-mono">{heldBy}</code>. You can still assign it.
             </span>
           </p>
         )}
 
-        {request.candidates.length > 0 ? (
-          <ul className="-mx-1 space-y-0.5">
-            {request.candidates.map(target => (
-              <TargetRow
-                key={target.id}
-                target={target}
-                busy={busy}
-                selected={selected === target.id}
-                suggested={target.id === request.suggested}
-                heldBy={request.heldElsewhere[target.id]}
-                onSelect={() => setSelected(target.id)}
-                onAssign={() => void assign(target.id)}
-              />
-            ))}
-          </ul>
-        ) : (
-          <p className="px-1 py-6 text-center text-sm text-muted-foreground">
-            The agent offered no {request.kind}. Open one and refresh.
-          </p>
-        )}
-      </CardContent>
+        <div className="flex flex-wrap items-center justify-between gap-2 border-t border-border px-4 py-3">
+          <div className="flex flex-wrap items-center gap-2">
+            <Button
+              disabled={selected === null || locked || expired}
+              aria-describedby={assignError ? assignErrorId : undefined}
+              onClick={() => selected && void assign(selected)}
+            >
+              {sending !== null && sending === selected ? 'Assigning…' : selected ? `Assign ${selected}` : 'Assign'}
+            </Button>
+            <Button
+              variant="outline"
+              aria-expanded={manualOpen}
+              aria-controls={manualPanelId}
+              onClick={() => setManualOpen(open => !open)}
+            >
+              Assign by ID
+            </Button>
+          </div>
+          <div className="flex flex-wrap items-center gap-1">
+            <Button variant="ghost" onClick={() => void refresh()} disabled={refreshing}>
+              <RefreshCw aria-hidden className={cn(refreshing && 'animate-spin')} />
+              Refresh
+            </Button>
+            <Button variant="ghost" onClick={() => setDenyOpen(true)}>Deny</Button>
+            <DropdownMenu>
+              <DropdownMenuTrigger asChild>
+                <Button variant="ghost" size="icon" aria-label="More request actions">
+                  <Ellipsis aria-hidden />
+                </Button>
+              </DropdownMenuTrigger>
+              <DropdownMenuContent>
+                <DropdownMenuItem onSelect={() => setDismissOpen(true)}>Dismiss without answering</DropdownMenuItem>
+              </DropdownMenuContent>
+            </DropdownMenu>
+          </div>
+        </div>
 
-      <CardFooter className="flex-wrap justify-between gap-3 border-t border-border !py-3">
-        <form
-          className="flex items-center gap-2"
-          onSubmit={event => {
-            event.preventDefault();
-            const target = normalise(typed, request.kind);
-            if (target) void assign(target);
-          }}
-        >
-          <input
-            value={typed}
-            onChange={event => setTyped(event.target.value)}
-            placeholder={request.kind === 'window' ? '@5' : '%3'}
-            aria-label={`Assign a ${request.kind} by id`}
-            className="h-8 w-20 rounded-md border border-input bg-transparent px-2 font-mono text-sm outline-none transition focus-visible:border-ring focus-visible:ring-[3px] focus-visible:ring-ring/50"
-          />
-          {/* Not disabled while empty: a disabled submit button also blocks
-              pressing Enter in the field, and an empty submit is already a no-op. */}
-          <Button type="submit" size="sm" variant="secondary" disabled={busy}>
-            Assign by ID
-          </Button>
-        </form>
-        <div className="flex items-center gap-1">
-          <Button variant="ghost" size="sm" onClick={() => void refresh()} disabled={refreshing}>
-            <RefreshCw className={refreshing ? 'size-3.5 animate-spin' : 'size-3.5'} />
-            Refresh
-          </Button>
-          <DenyDialog reason={request.reason} requestId={request.id} onDenied={onChanged} />
-          <Button
-            variant="ghost"
-            size="sm"
-            aria-label="Throw this request away"
-            title="Throw the card away without answering. For requests the agent has forgotten."
-            onClick={async () => {
-              try {
-                await dismissRequest(request.id);
-                onChanged();
-              } catch (cause) {
-                toast.error((cause as Error).message);
-              }
+        {assignError && (
+          <div className="px-4 pb-3">
+            <InlineError id={assignErrorId}>{assignError}</InlineError>
+          </div>
+        )}
+
+        {manualOpen && (
+          <form
+            id={manualPanelId}
+            className="grid gap-1.5 border-t border-border px-4 py-3"
+            onSubmit={event => {
+              event.preventDefault();
+              const target = normaliseTarget(typed, request.kind);
+              if (target && !locked) void assign(target);
             }}
           >
-            <Trash2 className="size-3.5" />
-          </Button>
+            <label htmlFor={manualId} className="text-xs font-medium">{Noun} ID</label>
+            <div className="flex flex-wrap items-center gap-2">
+              <input
+                id={manualId}
+                value={typed}
+                onChange={event => setTyped(event.target.value)}
+                placeholder={request.kind === 'window' ? '@5' : '%3'}
+                aria-describedby={manualHelpId}
+                autoComplete="off"
+                spellCheck={false}
+                className={cn(inputClass, 'w-40 font-mono')}
+              />
+              <Button type="submit" variant="secondary" disabled={locked}>Assign</Button>
+            </div>
+            <p id={manualHelpId} className="text-xs text-muted-foreground">
+              The agent validates this target against its scope. A plain number becomes {request.kind === 'window' ? '@' : '%'} followed by it.
+            </p>
+          </form>
+        )}
+
+        <div className="border-t border-border px-4 py-2">
+          <Disclosure summary="Request details">
+            <DetailList
+              className="pb-2"
+              items={[
+                ['Request', request.id, true],
+                ['Created', absolute(request.createdAt)],
+                ['Expires', absolute(request.expiresAt)],
+                ['Client', agent?.mcpClient ?? <NotReported />],
+                ['Raw client', agent?.client ?? <NotReported />, true],
+                ['Machine', agent?.host ?? <NotReported />, true],
+                ['Path', agent?.cwd ?? <NotReported />, true],
+                ['Agent session', agent?.sessionId ?? <NotReported />, true],
+                ['Tmux server', agent?.tmuxServer ?? <NotReported />, true],
+                ['Tmux session', agent?.tmuxSession ?? <NotReported />, true],
+                ['Scope', agent?.scope ?? <NotReported />],
+                ['PID', agent ? String(agent.pid) : <NotReported />, true],
+                ['Instance', agent?.instanceId ?? <NotReported />, true],
+                ['Suggested', request.suggested ?? 'None', true],
+                ['Age', ago(request.createdAt)],
+              ]}
+            />
+          </Disclosure>
         </div>
-      </CardFooter>
-    </Card>
+      </article>
+
+      <DenyDialog
+        open={denyOpen}
+        onOpenChange={setDenyOpen}
+        reason={request.reason}
+        requestId={request.id}
+        onDenied={() => { onActed(request.id); onChanged(); }}
+      />
+      <ConfirmDialog
+        open={dismissOpen}
+        onOpenChange={setDismissOpen}
+        title="Dismiss without answering?"
+        description="Remove this request without sending an answer? The agent is not told anything. Use this for requests the agent has forgotten; use Deny to decline."
+        confirmLabel="Dismiss request"
+        busyLabel="Dismissing…"
+        onConfirm={async () => {
+          await dismissRequest(request.id);
+          toast.success('Request dismissed');
+          onActed(request.id);
+          onChanged();
+        }}
+      />
+    </Panel>
   );
 }

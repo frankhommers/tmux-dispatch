@@ -1,78 +1,88 @@
-import { useState } from 'react';
-import { KeyRound, LogIn } from 'lucide-react';
+import { useId, useState } from 'react';
 import { Button } from '@/components/ui/button';
-import { Card, CardContent, CardHeader } from '@/components/ui/card';
+import { InlineError, inputClass } from '@/components/common';
+import { AuthPanel } from '@/components/auth-panel';
 import { login, type AuthMode } from '@/lib/api';
+import type { ThemePreference } from '@/lib/theme';
+import { cn } from '@/lib/utils';
 
-export function SignIn({ authMode, onSignedIn }: { authMode: AuthMode; onSignedIn: () => void }) {
+interface Props {
+  authMode: AuthMode;
+  onSignedIn: () => void;
+  onRetry: () => void;
+  theme: ThemePreference;
+  onTheme: (value: ThemePreference) => void;
+}
+
+/**
+ * Signing in, in whichever way this deployment uses. The page path stays as
+ * it is, so signing in on /link returns to pairing.
+ */
+export function SignIn({ authMode, onSignedIn, onRetry, theme, onTheme }: Props) {
+  // The password lives only in this component's memory and is cleared on success.
   const [password, setPassword] = useState('');
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
+  const passwordId = useId();
+  const errorId = useId();
+
+  if (authMode === 'token') {
+    return (
+      <AuthPanel title="Open dispatch with a valid access link" subtitle="This deployment uses an access link with a token. The link you used is missing its token or the token is no longer valid." theme={theme} onTheme={onTheme}>
+        <Button variant="outline" onClick={onRetry}>Retry</Button>
+      </AuthPanel>
+    );
+  }
 
   if (authMode === 'oidc') {
     return (
-      <Shell>
-        <p className="text-sm text-muted-foreground">
-          Sign in with your identity provider to see requests from your machines.
-        </p>
-        <Button asChild className="w-full">
-          <a href="/auth/start">
-            <LogIn className="size-4" />
-            Continue
-          </a>
+      <AuthPanel title="Sign in to manage terminal access" theme={theme} onTheme={onTheme}>
+        <Button asChild>
+          <a href="/auth/start">Continue to identity provider</a>
         </Button>
-      </Shell>
+      </AuthPanel>
     );
   }
 
   return (
-    <Shell>
-      <p className="text-sm text-muted-foreground">
-        This deployment is protected by a single password.
-      </p>
+    <AuthPanel title="Sign in to manage terminal access" theme={theme} onTheme={onTheme}>
       <form
-        className="flex flex-col gap-3"
+        className="grid gap-3"
         onSubmit={async event => {
           event.preventDefault();
+          if (!password || busy) return;
           setBusy(true);
           setError(null);
           try {
             await login(password);
+            setPassword('');
             onSignedIn();
           } catch (cause) {
-            setError((cause as Error).message);
+            const message = cause instanceof Error ? cause.message : String(cause);
+            setError(message ? message.charAt(0).toUpperCase() + message.slice(1) : 'Could not sign in.');
           } finally {
             setBusy(false);
           }
         }}
       >
-        <input
-          autoFocus
-          type="password"
-          value={password}
-          onChange={event => setPassword(event.target.value)}
-          placeholder="Password"
-          className="h-9 w-full rounded-md border border-input bg-transparent px-3 text-sm outline-none transition focus-visible:border-ring focus-visible:ring-[3px] focus-visible:ring-ring/50"
-        />
-        {error && <p className="text-sm text-destructive">{error}</p>}
-        <Button type="submit" disabled={busy || password.length === 0}>
-          <KeyRound className="size-4" />
-          Sign in
-        </Button>
+        <div className="grid gap-1.5">
+          <label htmlFor={passwordId} className="text-xs font-medium">Password</label>
+          <input
+            id={passwordId}
+            autoFocus
+            required
+            type="password"
+            autoComplete="current-password"
+            value={password}
+            onChange={event => setPassword(event.target.value)}
+            aria-invalid={error ? true : undefined}
+            aria-describedby={error ? errorId : undefined}
+            className={cn(inputClass)}
+          />
+          <InlineError id={errorId}>{error}</InlineError>
+        </div>
+        <Button type="submit" disabled={busy}>{busy ? 'Signing in…' : 'Sign in'}</Button>
       </form>
-    </Shell>
-  );
-}
-
-function Shell({ children }: { children: React.ReactNode }) {
-  return (
-    <div className="flex min-h-dvh items-center justify-center p-6">
-      <Card className="w-full max-w-sm border-border shadow-sm">
-        <CardHeader>
-          <h1 className="text-lg font-semibold tracking-tight">tmux-dispatch</h1>
-        </CardHeader>
-        <CardContent className="flex flex-col gap-4">{children}</CardContent>
-      </Card>
-    </div>
+    </AuthPanel>
   );
 }

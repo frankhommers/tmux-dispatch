@@ -606,7 +606,7 @@ test('handing the same pane back over makes it current again', async () => {
 });
 
 test('a machine that is gone and holds nothing is not listed, but is still refused', async () => {
-  await withService({}, async ({ url, config }) => {
+  await withService({}, async ({ url, config, service }) => {
     const instanceId = randomUUID();
     const agent = connectAgent(url, config.token, { instanceId });
     await agent.waitFor('welcome');
@@ -620,6 +620,9 @@ test('a machine that is gone and holds nothing is not listed, but is still refus
     });
     agent.close();
     await new Promise(r => setTimeout(r, 300));
+    // Quiet for longer than a running tmux-mcp ever is.
+    const { LIVENESS_MS } = await import('../server-dist/agents.js');
+    for (const known of service.agents['agents'].values()) known.lastSeen = Date.now() - LIVENESS_MS - 1;
 
     const body = await inbox(url, config);
     assert.deepEqual(body.agents, [], 'nothing connected and nothing held is nothing to show');
@@ -1845,5 +1848,46 @@ test('a connected agent on a tmux server that is gone loses what it holds there'
       holder.close();
       witness.close();
     }
+  });
+});
+
+test('an idle agent that hangs up between calls stays listed, online', async () => {
+  await withService({}, async ({ url, config }) => {
+    const agent = connectAgent(url, config.token);
+    await agent.waitFor('welcome');
+    agent.close();
+    await settle();
+    const agents = (await inbox(url, config)).agents;
+    assert.equal(agents.length, 1, 'a tmux-mcp dials in every 30s and hangs up: it has not gone');
+    assert.equal(agents[0].online, true);
+    assert.equal(agents[0].connected, false);
+  });
+});
+
+test('an agent quiet for longer than it ever is shows as offline', async () => {
+  await withService({}, async ({ url, config, service }) => {
+    const agent = connectAgent(url, config.token);
+    await agent.waitFor('welcome');
+    agent.send({ type: 'grants', grants: [GRANT] });
+    await settle();
+    agent.close();
+    await settle();
+    const { LIVENESS_MS } = await import('../server-dist/agents.js');
+    for (const known of service.agents['agents'].values()) known.lastSeen = Date.now() - LIVENESS_MS - 1;
+    const agents = (await inbox(url, config)).agents;
+    assert.equal(agents.length, 1, 'it still holds something');
+    assert.equal(agents[0].online, false);
+  });
+});
+
+test('a rule\'s tmux server stays online while its agent only dials in now and then', async () => {
+  await withService({}, async ({ url, config, service }) => {
+    const account = localAccount(service.store);
+    service.store.addPoolEntry(account.id, '%3', 'pane', true, { tmuxServer: 'socket:1:100' });
+    const agent = connectAgent(url, config.token, { tmuxServer: 'socket:1:100' });
+    await agent.waitFor('welcome');
+    agent.close();
+    await settle();
+    assert.equal((await rules(url, config))[0].live, true);
   });
 });

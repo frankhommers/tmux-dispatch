@@ -7,7 +7,7 @@ import { WebSocketServer } from 'ws';
 
 import type { Config } from './config.js';
 import { Store } from './db.js';
-import { AgentRegistry, parseTmuxServer, sameMachine } from './agents.js';
+import { AgentRegistry, isOnline, parseTmuxServer, sameMachine } from './agents.js';
 import { Pairings } from './devices.js';
 import { findPoolMatch } from './pool.js';
 import {
@@ -294,6 +294,7 @@ export async function startService(config: Config): Promise<Service> {
           connectedAt: agent.connectedAt,
           lastSeen: agent.lastSeen,
           connected: agent.connected,
+          online: isOnline(agent),
           grants: agent.grants.map(grant => ({
             ...grant,
             lastActivity: agent.activity.get(grant.target) ?? null,

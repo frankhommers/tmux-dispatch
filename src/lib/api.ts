@@ -101,7 +101,10 @@ export interface ConnectedAgent {
   identity: AgentIdentity;
   connectedAt: number;
   lastSeen: number;
+  /** A socket is open right now. An idle agent hangs up between calls, so this flickers. */
   connected: boolean;
+  /** Connected or heard from in the last 90 seconds: still running. Use this for status. */
+  online: boolean;
   grants: Grant[];
 }
 

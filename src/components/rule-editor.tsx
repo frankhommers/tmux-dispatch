@@ -381,7 +381,7 @@ export function RuleEditorForm({ session, pool, agents, onSwitch, onClose, onDon
                 <option value="">Choose an agent…</option>
                 {agents.map(agent => (
                   <option key={agent.id} value={agent.id}>
-                    {projectOf(agent.identity) ?? 'No path'} · {clientName(agent.identity)} · {shortHost(agent.identity.host)}{agent.connected ? '' : ' (offline)'}
+                    {projectOf(agent.identity) ?? 'No path'} · {clientName(agent.identity)} · {shortHost(agent.identity.host)}{agent.online ? '' : ' (offline)'}
                   </option>
                 ))}
               </select>

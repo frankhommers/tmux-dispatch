@@ -91,7 +91,7 @@ export default function App() {
           requests: inbox ? inbox.requests.length : null,
           expiring: inbox ? inbox.requests.filter(request => minutesLeft(request.expiresAt) < 10).length : 0,
           urgent: inbox ? inbox.requests.filter(request => minutesLeft(request.expiresAt) < 2).length : 0,
-          agents: inbox ? inbox.agents.filter(agent => agent.connected).length : null,
+          agents: inbox ? inbox.agents.filter(agent => agent.online).length : null,
           rules: data.pool.data ? data.pool.data.length : null,
         }}
         onSignedOut={loadSession}
@@ -103,7 +103,7 @@ export default function App() {
           onTab={setTab}
           counts={{
             agents: inbox ? inbox.agents.length : null,
-            offline: inbox ? inbox.agents.filter(agent => !agent.connected).length : null,
+            offline: inbox ? inbox.agents.filter(agent => !agent.online).length : null,
             rules: data.pool.data ? data.pool.data.length : null,
             machines: data.devices.data ? data.devices.data.length : null,
           }}

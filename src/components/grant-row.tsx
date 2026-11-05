@@ -62,7 +62,7 @@ export function GrantRow({ agent, grant, pool, onChanged, onShowRule, onRevoked 
   const scopeId = useId();
 
   const { location, command, title } = parseLabel(grant.label);
-  const offline = !agent.connected;
+  const offline = !agent.online;
   const scope = keepScope(agent.identity);
   const keptRule = pool ? keptBy(pool, agent.identity, grant) : undefined;
   // The rule keep would return. When spent, keeping again would only return it

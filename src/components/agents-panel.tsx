@@ -30,10 +30,12 @@ import { ago, absolute, plural, shortHost, shortPath, shortSession } from '@/lib
 import { clientName, projectOf } from '@/lib/identity';
 import { cn } from '@/lib/utils';
 
-/** Connected first, then by project, machine and id, so the list holds still between refreshes. */
+/**
+ * By project, machine and id only. Status is left out on purpose: agents dial
+ * in and hang up all the time, and a list that re-sorts on that never holds still.
+ */
 function byStatus(a: ConnectedAgent, b: ConnectedAgent): number {
-  return Number(b.connected) - Number(a.connected)
-    || (projectOf(a.identity) ?? '').localeCompare(projectOf(b.identity) ?? '')
+  return (projectOf(a.identity) ?? '').localeCompare(projectOf(b.identity) ?? '')
     || a.identity.host.localeCompare(b.identity.host)
     || a.id.localeCompare(b.id);
 }
@@ -84,10 +86,10 @@ function identityItems(agent: ConnectedAgent): [DetailItem[], DetailItem[]] {
 }
 
 function StatusText({ agent, className }: { agent: ConnectedAgent; className?: string }) {
-  return agent.connected ? (
-    <span className={cn('inline-flex items-center gap-1.5 text-[13px] leading-5 font-medium text-live', className)}>
+  return agent.online ? (
+    <span className={cn('inline-flex items-center gap-1.5 text-[13px] leading-5 font-medium text-live', className)} title={`Last heard from ${absolute(agent.lastSeen)}`}>
       <Dot tone="live" />
-      Connected
+      Online
     </span>
   ) : (
     <span className={cn('inline-flex items-center gap-1.5 text-[13px] leading-5 text-muted-foreground', className)}>
@@ -113,7 +115,7 @@ function AgentGroup({ agent, label, pool, onChanged, onShowRule }: {
   const safeId = agent.id.replace(/[^\w-]/g, '_');
   const headingId = `agent-${safeId}`;
   const detailsId = `agent-details-${safeId}`;
-  const offline = !agent.connected;
+  const offline = !agent.online;
   const who = `${client}${project ? ` in ${project}` : ''} on ${shortHost(identity.host)}`;
   const [left, right] = identityItems(agent);
 
@@ -268,8 +270,8 @@ export function AgentsPanel({ inbox, pool, stale, onRefresh, onShowRule }: {
   const agents = useMemo(() => [...(inbox.data?.agents ?? [])].sort(byStatus), [inbox.data?.agents]);
   const labels = useMemo(() => projectLabels(agents), [agents]);
   const loaded = inbox.data !== null;
-  const connected = agents.filter(agent => agent.connected).length;
-  const offline = agents.length - connected;
+  const online = agents.filter(agent => agent.online).length;
+  const offline = agents.length - online;
   const assignments = agents.reduce((total, agent) => total + agent.grants.length, 0);
 
   return (
@@ -278,7 +280,7 @@ export function AgentsPanel({ inbox, pool, stale, onRefresh, onShowRule }: {
       <PanelToolbar>
         {loaded && agents.length > 0 && (
           <>
-            <span className="font-medium text-foreground">{connected} connected</span>
+            <span className="font-medium text-foreground">{online} online</span>
             {offline > 0 && <> · {offline} offline</>}
             {' · '}{plural(assignments, 'assignment')}.{' '}
           </>

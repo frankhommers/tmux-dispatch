@@ -51,6 +51,11 @@ export interface ConnectedAgent {
   connectedAt: number;
   lastSeen: number;
   connected: boolean;
+  /**
+   * Dialled in since dispatch started and not forgotten since. A saved or
+   * forgotten agent is not online until it is heard from again.
+   */
+  seenLive?: boolean;
   grants: WireGrant[];
   /** Targets the human took back, and when. A check for one of these is refused. */
   revoked: Map<string, number>;
@@ -88,6 +93,14 @@ export function sameMachine(a: string | null | undefined, b: string | null | und
  */
 export const LIVENESS_MS = 90_000;
 
+/**
+ * Whether an agent is still running, as far as dispatch can tell: connected
+ * now, or heard from recently. An idle agent is mostly not connected.
+ */
+export function isOnline(agent: ConnectedAgent, now = Date.now()): boolean {
+  return agent.connected || (agent.seenLive === true && now - agent.lastSeen <= LIVENESS_MS);
+}
+
 /** Long enough for any UUID or thread name; anything else is not a session id. */
 const MAX_SESSION_ID = 200;
 
@@ -120,6 +133,7 @@ export class AgentRegistry extends EventEmitter {
       this.agents.set(saved.id, {
         ...saved,
         connected: false,
+        seenLive: false,
         revoked: new Map(saved.revoked),
         activity: new Map(saved.activity),
       });
@@ -129,7 +143,7 @@ export class AgentRegistry extends EventEmitter {
     this.on('change', (accountId: number) => {
       const saved = [...this.agents.values()]
         .filter(agent => agent.accountId === accountId && (agent.grants.length > 0 || agent.revoked.size > 0))
-        .map(({ connected: _connected, revoked, activity, ...agent }) => ({
+        .map(({ connected: _connected, seenLive: _seenLive, revoked, activity, ...agent }) => ({
           ...agent, revoked: [...revoked], activity: [...activity],
         }));
       store.saveAgents(accountId, saved);
@@ -174,6 +188,7 @@ export class AgentRegistry extends EventEmitter {
           connectedAt: known?.connectedAt ?? Date.now(),
           lastSeen: Date.now(),
           connected: true,
+          seenLive: true,
           grants: known?.grants ?? [],
           revoked: known?.revoked ?? new Map(),
           activity: known?.activity ?? new Map(),
@@ -198,10 +213,11 @@ export class AgentRegistry extends EventEmitter {
       }
       const agent = this.agents.get(id);
       if (agent) {
+        // Kept even when it holds nothing: an idle tmux-mcp hangs up between
+        // calls, and dropping it each time made it blink in and out of view.
+        // listAgents lets it go once it has been quiet for too long.
         agent.connected = false;
         agent.lastSeen = Date.now();
-        // Nothing handed out and nothing to take back: nothing to show either.
-        if (agent.grants.length === 0 && agent.revoked.size === 0) this.agents.delete(id);
       }
       this.emit('change', accountId);
     });
@@ -359,10 +375,18 @@ export class AgentRegistry extends EventEmitter {
    * entry that is neither may still be remembered — a revocation outlives the
    * socket it could not be delivered on — but there is nothing to show.
    */
-  listAgents(accountId: number): ConnectedAgent[] {
+  listAgents(accountId: number, now = Date.now()): ConnectedAgent[] {
+    this.pruneQuiet(now);
     return [...this.agents.values()].filter(
-      agent => agent.accountId === accountId && (agent.connected || agent.grants.length > 0)
+      agent => agent.accountId === accountId && (isOnline(agent, now) || agent.grants.length > 0)
     );
+  }
+
+  /** Forget agents that hold nothing, have nothing to take back, and have gone quiet. */
+  private pruneQuiet(now: number): void {
+    for (const [id, agent] of this.agents) {
+      if (!isOnline(agent, now) && agent.grants.length === 0 && agent.revoked.size === 0) this.agents.delete(id);
+    }
   }
 
   listRequests(accountId: number): OpenRequest[] {
@@ -486,10 +510,10 @@ export class AgentRegistry extends EventEmitter {
   }
 
   /** Every tmux server an agent is connected from right now. */
-  liveTmuxServers(accountId: number): Set<string> {
+  liveTmuxServers(accountId: number, now = Date.now()): Set<string> {
     const live = new Set<string>();
     for (const agent of this.agents.values()) {
-      if (agent.accountId !== accountId || !agent.connected) continue;
+      if (agent.accountId !== accountId || !isOnline(agent, now)) continue;
       if (agent.identity.tmuxServer) live.add(agent.identity.tmuxServer);
     }
     return live;
@@ -523,7 +547,10 @@ export class AgentRegistry extends EventEmitter {
     for (const agent of this.agents.values()) {
       if (agent === reporter || agent.connected || agent.accountId !== reporter.accountId) continue;
       if (agent.identity.tmuxServer !== server) continue;
+      const before = agent.grants.length;
       agent.grants = agent.grants.filter(g => !claimed.has(g.target));
+      // Everything it held turned up with a newer agent: it was this one, restarted.
+      if (before > 0 && agent.grants.length === 0) agent.seenLive = false;
     }
   }
 
@@ -536,6 +563,7 @@ export class AgentRegistry extends EventEmitter {
     if (!agent || agent.accountId !== accountId) return 'unknown';
     if (agent.connected) return 'connected';
     agent.grants = [];
+    agent.seenLive = false;
     if (agent.revoked.size === 0) this.agents.delete(agentId);
     this.emit('change', accountId);
     return 'forgotten';

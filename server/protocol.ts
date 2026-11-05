@@ -6,7 +6,7 @@
  * independently anyway. PROTOCOL_VERSION is what keeps them honest.
  */
 
-export const PROTOCOL_VERSION = '1.7';
+export const PROTOCOL_VERSION = '1.8';
 
 export function protocolMajor(version: string): string {
   return version.split('.')[0] ?? '';
@@ -76,7 +76,9 @@ export type ServerToDispatch =
   | { type: 'grants'; grants: WireGrant[] }
   | { type: 'inventory-changed' }
   | { type: 'validation'; id: string; tmuxServer: string; missing: string[] }
-  | { type: 'check'; id: string; target: string };
+  | { type: 'check'; id: string; target: string }
+  /** 1.8: the tmux server this agent was on is gone; its ids mean nothing now. */
+  | { type: 'tmux-gone'; tmuxServer: string };
 
 export type DispatchToServer =
   | { type: 'welcome'; protocolVersion: string; account?: string }
@@ -107,6 +109,10 @@ export function parseAgentMessage(raw: string): ServerToDispatch | null {
         && frame.tmuxServer.length > 0 && Array.isArray(frame.missing)
         && frame.missing.every(target => typeof target === 'string' && /^[%@]\d+$/.test(target))
         ? value as ServerToDispatch : null;
+    }
+    case 'tmux-gone': {
+      const frame = value as { tmuxServer?: unknown };
+      return typeof frame.tmuxServer === 'string' && frame.tmuxServer.length > 0 ? value as ServerToDispatch : null;
     }
     case 'hello':
       return message as ServerToDispatch;

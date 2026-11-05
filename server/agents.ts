@@ -72,6 +72,17 @@ export function parseTmuxServer(fingerprint: string | undefined): { socket: stri
 }
 
 /**
+ * Whether two reported host names are one machine. A Mac names itself after
+ * the network it is on (`Franks-MBP16.local` at home, `Franks-MBP16.lan`
+ * elsewhere), so only the first label says which machine it is.
+ */
+export function sameMachine(a: string | null | undefined, b: string | null | undefined): boolean {
+  if (!a || !b) return false;
+  const short = (host: string) => host.split('.')[0]!.toLowerCase();
+  return short(a) === short(b);
+}
+
+/**
  * How long a quiet agent still counts as alive. A running tmux-mcp dials in at
  * least every 30 seconds, so three missed calls mean it is most likely gone.
  */
@@ -218,11 +229,11 @@ export class AgentRegistry extends EventEmitter {
         const missing = new Set(message.missing);
         if (missing.size === 0) return;
         for (const entry of this.store.listPool(accountId)) {
-          if (entry.host === agent.identity.host && entry.tmuxServer === message.tmuxServer
+          if (sameMachine(entry.host, agent.identity.host) && entry.tmuxServer === message.tmuxServer
             && missing.has(entry.pattern)) this.store.removePoolEntry(accountId, entry.id);
         }
         for (const [id, holder] of this.agents) {
-          if (holder.accountId !== accountId || holder.identity.host !== agent.identity.host
+          if (holder.accountId !== accountId || !sameMachine(holder.identity.host, agent.identity.host)
             || holder.identity.tmuxServer !== message.tmuxServer) continue;
           holder.grants = holder.grants.filter(grant => !missing.has(grant.target));
           for (const target of missing) {
@@ -232,6 +243,10 @@ export class AgentRegistry extends EventEmitter {
           if (!holder.connected && holder.grants.length === 0 && holder.revoked.size === 0) this.agents.delete(id);
         }
         this.emit('change', accountId);
+        return;
+      }
+      case 'tmux-gone': {
+        if (agent) this.forgetTmuxServer(agent, message.tmuxServer);
         return;
       }
       case 'request': {
@@ -309,11 +324,11 @@ export class AgentRegistry extends EventEmitter {
     if (!tmuxServer || !socket) return;
     const targets = new Set<string>();
     for (const entry of this.store.listPool(agent.accountId)) {
-      if (entry.host === agent.identity.host && entry.tmuxServer === tmuxServer
+      if (sameMachine(entry.host, agent.identity.host) && entry.tmuxServer === tmuxServer
         && /^[%@]\d+$/.test(entry.pattern)) targets.add(entry.pattern);
     }
     for (const holder of this.agents.values()) {
-      if (holder.accountId !== agent.accountId || holder.identity.host !== agent.identity.host
+      if (holder.accountId !== agent.accountId || !sameMachine(holder.identity.host, agent.identity.host)
         || holder.identity.tmuxServer !== tmuxServer) continue;
       for (const grant of holder.grants) targets.add(grant.target);
       for (const target of holder.revoked.keys()) targets.add(target);
@@ -432,7 +447,7 @@ export class AgentRegistry extends EventEmitter {
     if (!current) return;
     for (const [id, agent] of this.agents) {
       if (id === newcomer.id || agent.connected || agent.accountId !== newcomer.accountId) continue;
-      if (agent.identity.host !== newcomer.identity.host) continue;
+      if (!sameMachine(agent.identity.host, newcomer.identity.host)) continue;
       const theirs = parseTmuxServer(agent.identity.tmuxServer);
       if (theirs && theirs.socket === current.socket && theirs.startedAt < current.startedAt) {
         this.agents.delete(id);
@@ -447,6 +462,27 @@ export class AgentRegistry extends EventEmitter {
       socket: current.socket,
       startedAt: current.startedAt,
     });
+  }
+
+  /**
+   * A tmux server that is gone, as seen by an agent on the same machine. The
+   * ids handed out on it point at nothing now, so whoever held them holds
+   * nothing there any more, connected or not, and the rules naming them are
+   * void. Only on the reporter's machine: the same socket path elsewhere is
+   * another tmux altogether.
+   */
+  private forgetTmuxServer(reporter: ConnectedAgent, tmuxServer: string): void {
+    const host = reporter.identity.host;
+    for (const [id, agent] of [...this.agents]) {
+      if (agent.accountId !== reporter.accountId || agent.identity.tmuxServer !== tmuxServer) continue;
+      if (!sameMachine(agent.identity.host, host)) continue;
+      agent.grants = [];
+      agent.revoked.clear();
+      agent.activity.clear();
+      if (!agent.connected) this.agents.delete(id);
+    }
+    this.emit('tmux-gone', { accountId: reporter.accountId, host, tmuxServer });
+    this.emit('change', reporter.accountId);
   }
 
   /** Every tmux server an agent is connected from right now. */

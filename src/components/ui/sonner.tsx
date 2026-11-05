@@ -9,13 +9,13 @@ import {
 } from "lucide-react"
 import { Toaster as Sonner, type ToasterProps } from "sonner"
 
-// The app is dark-first and has no theme switcher, so there is nothing to
-// read a theme from; next-themes would be a dependency for one constant.
-const Toaster = ({ ...props }: ToasterProps) => {
+// The resolved theme is passed in from useTheme, so no theme package is needed.
+const Toaster = ({ theme, ...props }: ToasterProps & { theme: "light" | "dark" }) => {
   return (
     <Sonner
-      theme="dark"
+      theme={theme}
       className="toaster group"
+      duration={5000}
       icons={{
         success: <CircleCheckIcon className="size-4" />,
         info: <InfoIcon className="size-4" />,

@@ -3,31 +3,44 @@
 
 @custom-variant dark (&:is(.dark *));
 
+/*
+ * Light is the default; `.dark` is set on <html> before first paint by the
+ * script in index.html, from the stored preference or the system setting.
+ */
 :root {
-  --radius: 0.6rem;
-  --background: oklch(1 0 0);
+  color-scheme: light;
+  --radius: 10px;
+  --background: #ffffff;
   --foreground: oklch(0.141 0.005 285.823);
-  --card: oklch(1 0 0);
+  --card: #ffffff;
   --card-foreground: oklch(0.141 0.005 285.823);
-  --popover: oklch(1 0 0);
+  --popover: #ffffff;
   --popover-foreground: oklch(0.141 0.005 285.823);
   --primary: oklch(0.21 0.006 285.885);
   --primary-foreground: oklch(0.985 0 0);
   --secondary: oklch(0.967 0.001 286.375);
   --secondary-foreground: oklch(0.21 0.006 285.885);
   --muted: oklch(0.967 0.001 286.375);
-  --muted-foreground: oklch(0.552 0.016 285.938);
+  --muted-foreground: #5f5f6a;
   --accent: oklch(0.967 0.001 286.375);
   --accent-foreground: oklch(0.21 0.006 285.885);
-  --destructive: oklch(0.577 0.245 27.325);
+  --destructive: #b42318;
+  --destructive-foreground: #ffffff;
   --border: oklch(0.92 0.004 286.32);
-  --input: oklch(0.92 0.004 286.32);
-  --ring: oklch(0.705 0.015 286.067);
-  /* Assignment is the one affirmative action in this app; it gets the accent. */
-  --live: oklch(0.72 0.19 149);
+  /* Form controls need a 3:1 boundary against the surface. */
+  --input: #8b8b96;
+  --ring: #166534;
+  /* Small green text on white: the darker green keeps 4.5:1. */
+  --live: #166534;
+  /* Pending attention only. */
+  --warning: #92400e;
+  --warning-surface: #fffbeb;
+  --warning-border: #d97706;
+  --highlight: #ecfdf3;
 }
 
 .dark {
+  color-scheme: dark;
   --background: #101419;
   --foreground: #eef2f6;
   --card: #191f27;
@@ -43,15 +56,20 @@
   --accent: #293643;
   --accent-foreground: #ffffff;
   --destructive: #ff9696;
+  --destructive-foreground: #2b0b0b;
   --border: #3a4858;
   --input: #627286;
   --ring: #9be5bb;
   --live: #9be5bb;
+  --warning: #fcd68a;
+  --warning-surface: #30291d;
+  --warning-border: #d9a441;
+  --highlight: #1c3328;
 }
 
 @theme inline {
-  --radius-sm: calc(var(--radius) - 4px);
-  --radius-md: calc(var(--radius) - 2px);
+  --radius-sm: 4px;
+  --radius-md: 6px;
   --radius-lg: var(--radius);
   --radius-xl: calc(var(--radius) + 4px);
   --color-background: var(--background);
@@ -69,28 +87,44 @@
   --color-accent: var(--accent);
   --color-accent-foreground: var(--accent-foreground);
   --color-destructive: var(--destructive);
+  --color-destructive-foreground: var(--destructive-foreground);
   --color-border: var(--border);
   --color-input: var(--input);
   --color-ring: var(--ring);
   --color-live: var(--live);
-  --font-mono: ui-monospace, "SF Mono", "JetBrains Mono", Menlo, monospace;
+  --color-warning: var(--warning);
+  --color-warning-surface: var(--warning-surface);
+  --color-warning-border: var(--warning-border);
+  --color-highlight: var(--highlight);
+  --font-mono: ui-monospace, "SF Mono", "JetBrains Mono", Menlo, Consolas, monospace;
 }
 
 @layer base {
   * {
-    @apply border-border outline-ring/50;
+    @apply border-border;
   }
   body {
     @apply bg-background text-foreground antialiased;
     font-synthesis-weight: none;
   }
+  /* One focus treatment everywhere: 2px ring, 2px offset, never removed. */
+  :focus-visible {
+    outline: 2px solid var(--ring);
+    outline-offset: 2px;
+  }
 }
 
-/* Solid surfaces keep small terminal labels and controls crisp. */
 body {
   margin: 0;
   font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
-  line-height: 1.5;
+  font-size: 14px;
+  line-height: 20px;
+  font-variant-numeric: tabular-nums;
+}
+
+/* Long paths and fingerprints wrap instead of pushing the page sideways. */
+.break-anywhere {
+  overflow-wrap: anywhere;
 }
 
 ::selection {
@@ -98,12 +132,20 @@ body {
   color: var(--primary-foreground);
 }
 
-button, [role="button"] { touch-action: manipulation; }
-button:not(:disabled), [role="button"] { cursor: pointer; }
+button, [role="button"], summary { touch-action: manipulation; }
+button:not(:disabled), [role="button"], summary, select:not(:disabled) { cursor: pointer; }
+
+/* Native disclosures: our own marker, so it reads the same in every browser. */
+summary { list-style: none; }
+summary::-webkit-details-marker { display: none; }
+details > summary .disclosure-chevron { transition: transform 150ms ease; }
+details[open] > summary .disclosure-chevron { transform: rotate(90deg); }
 
 @media (prefers-reduced-motion: reduce) {
   *, *::before, *::after {
     animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
     transition-duration: 0.01ms !important;
+    scroll-behavior: auto !important;
   }
 }

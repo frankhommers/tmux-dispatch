@@ -447,11 +447,14 @@ export function RuleEditorForm({ session, pool, agents, onSwitch, onClose, onDon
               <Info className="mt-px size-4 shrink-0 text-muted-foreground" aria-hidden />
               <p className="min-w-0 flex-1">
                 <span className="font-medium">This rule already exists</span>
-                <span className="text-muted-foreground max-sm:sr-only">
+                <span className="text-muted-foreground max-sm:hidden">
                   {' — '}rule #{duplicate.id} has the same type and conditions.{' '}
                   {duplicate.reusable !== draft.reusable
                     ? `Only Use differs: edit rule #${duplicate.id} to change it.`
                     : 'Change a condition to make a new rule.'}
+                </span>
+                <span className="block text-muted-foreground sm:hidden">
+                  {duplicate.reusable !== draft.reusable ? `To change Use, edit rule #${duplicate.id}.` : 'Change a condition to make a new rule.'}
                 </span>
               </p>
               <Button

@@ -155,13 +155,14 @@ export function AppShell({ session, connection, wasLive, counts, theme, onTheme,
         <div className="mx-auto flex h-14 max-w-[1440px] items-center gap-3 px-4 sm:gap-5 sm:px-6">
           <a href="#top" className="flex items-center gap-2 rounded-md" aria-label="tmux-dispatch, back to top">
             <span aria-hidden className="grid size-7 place-items-center rounded-md bg-foreground font-mono text-xs font-bold text-background">&gt;_</span>
-            <h1 className="text-[15px] leading-6 font-semibold tracking-tight max-[380px]:sr-only">tmux-dispatch</h1>
+            <h1 className="text-[15px] leading-6 font-semibold tracking-tight max-[400px]:sr-only">tmux-dispatch</h1>
           </a>
           {waiting > 0 && (
             <a
               href="#requests"
+              aria-label={`${waiting} ${waiting === 1 ? 'request' : 'requests'} waiting${expiring > 0 ? `, ${expiring} expiring within 10 minutes` : ''}. Go to requests.`}
               className={cn(
-                'inline-flex items-center gap-1.5 rounded-full px-2.5 py-1 text-xs font-semibold ring-1 ring-inset max-sm:min-h-9',
+                'inline-flex items-center gap-1.5 rounded-full px-2.5 py-1 text-xs font-semibold ring-1 ring-inset max-sm:min-h-11',
                 urgent
                   ? 'bg-urgent-surface text-destructive ring-destructive/40 hover:ring-destructive'
                   : 'bg-warning-surface text-warning ring-warning-border/50 hover:ring-warning-border',
@@ -169,7 +170,9 @@ export function AppShell({ session, connection, wasLive, counts, theme, onTheme,
             >
               <span aria-hidden className={cn('size-1.5 animate-pulse rounded-full', urgent ? 'bg-destructive' : 'bg-warning-border')} />
               {waiting} waiting
-              {expiring > 0 && <span className="font-medium max-[420px]:hidden">· {expiring} expiring</span>}
+              {expiring > 0 && (
+                <span className="font-medium">· {expiring}<span className="max-[420px]:hidden"> expiring</span><span className="min-[421px]:hidden"> soon</span></span>
+              )}
             </a>
           )}
           <div className="ml-auto flex items-center gap-2 sm:gap-3">

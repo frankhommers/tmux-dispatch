@@ -67,7 +67,7 @@ export function RequestsSection({ inbox, stale, onRefresh }: {
       ) : requests.length === 0 ? (
         <Panel className="flex min-h-12 items-center gap-2.5 px-4 py-3 text-sm text-muted-foreground">
           <CheckCircle2 className="size-4 text-live" aria-hidden />
-          No agent is waiting for a terminal. New requests appear here and as a notification.
+          No agent is waiting for a terminal. New requests appear here automatically.
         </Panel>
       ) : (
         <div className={requests.length > 1 ? "grid gap-4 xl:grid-cols-2 xl:items-start" : "grid gap-4"}>

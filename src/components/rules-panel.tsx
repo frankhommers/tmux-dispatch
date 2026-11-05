@@ -55,18 +55,18 @@ function RuleRow({ rule, order, busy, highlighted, onEdit, onClone, onReset, onD
         highlighted && 'bg-highlight',
       )}
     >
-      <td className="py-3 pl-4 font-mono text-[13px] leading-5 font-semibold text-foreground tabular-nums">{order}</td>
-      <td className="px-3 py-3">
+      <td className="py-2.5 pl-4 font-mono text-[13px] leading-5 font-semibold text-foreground tabular-nums">{order}</td>
+      <td className="px-3 py-2.5">
         <TargetValue rule={rule} dim={spent} />
         <span className="block text-xs leading-4 text-muted-foreground">{kindLine(rule)}</span>
       </td>
       {IDENTITY.map(element => (
-        <td key={element} className="px-3 py-3 leading-5">
+        <td key={element} className="px-3 py-2.5 leading-5">
           <ConditionValue rule={rule} element={element} className="rule-value" />
           {element === 'tmuxServer' && <ServerState rule={rule} className="mt-1" />}
         </td>
       ))}
-      <td className="px-3 py-3">
+      <td className="px-3 py-2.5">
         <div className="flex flex-col items-start gap-1">
           <StatusTag rule={rule} />
           <LastUsed rule={rule} />

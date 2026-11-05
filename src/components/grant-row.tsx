@@ -153,16 +153,11 @@ export function GrantRow({ agent, grant, pool, onChanged, onShowRule, onRevoked 
           </div>
         </div>
 
-        {/* Phones: activity first, whole, then the title in what room is left. */}
-        <p className="flex min-w-0 items-baseline gap-x-1.5 text-[13px] leading-5 text-muted-foreground sm:hidden">
-          <span className="shrink-0 whitespace-nowrap">{activity}</span>
-          {title && (
-            <>
-              <span aria-hidden>·</span>
-              <span title={title} className="min-w-0 truncate">{title}</span>
-            </>
-          )}
-        </p>
+        {/* Phones: the title whole, then the activity, also whole. */}
+        <div className="grid min-w-0 gap-0.5 text-[13px] leading-5 text-muted-foreground sm:hidden">
+          {title && <span className="min-w-0 break-anywhere">{title}</span>}
+          <span className="whitespace-nowrap">{activity}</span>
+        </div>
 
         {/* Line two below lg: when it was used, and what can be done. */}
         <div className="flex min-w-0 flex-wrap items-center justify-between gap-x-2 sm:flex-nowrap lg:contents">
